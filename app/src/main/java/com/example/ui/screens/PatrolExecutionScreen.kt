@@ -65,6 +65,19 @@ import com.example.ui.theme.StatusNormal
 import com.example.ui.theme.YamahaBlue
 import com.example.ui.theme.YamahaRed
 
+private fun calculateAsiaKolkataShift(): String {
+    val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Kolkata"))
+    val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+    val minute = cal.get(java.util.Calendar.MINUTE)
+    val timeInMinutes = hour * 60 + minute
+
+    return when {
+        timeInMinutes in 420 until 945 -> "Shift A (07:00 - 15:45)"
+        timeInMinutes >= 945 || timeInMinutes < 30 -> "Shift B (15:45 - 00:30)"
+        else -> "Shift C (00:30 - 07:00)"
+    }
+}
+
 @Composable
 fun PatrolExecutionScreen(
     user: UserEntity,
@@ -90,7 +103,7 @@ fun PatrolExecutionScreen(
     var selectedLine by remember { mutableStateOf(lines.firstOrNull()) }
     var selectedMachine by remember { mutableStateOf(machines.firstOrNull()) }
 
-    var selectedShift by remember { mutableStateOf("Morning Shift (06:00 - 14:00)") }
+    var selectedShift by remember { mutableStateOf(calculateAsiaKolkataShift()) }
     var patrolNotes by remember { mutableStateOf("") }
 
     // Checkpoint States: Point.id -> Pair(Status: "NORMAL" | "ABNORMAL" | "N/A", Remarks)

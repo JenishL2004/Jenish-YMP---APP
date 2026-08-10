@@ -58,6 +58,25 @@ import com.example.ui.theme.StatusWarning
 import com.example.ui.theme.YamahaBlue
 import com.example.ui.viewmodel.Screen
 
+private fun getCurrentShiftKolkata(): String {
+    val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Kolkata"))
+    val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+    val minute = cal.get(java.util.Calendar.MINUTE)
+    val timeInMinutes = hour * 60 + minute
+
+    return when {
+        timeInMinutes in 420 until 945 -> "Shift A (07:00 - 15:45)"
+        timeInMinutes >= 945 || timeInMinutes < 30 -> "Shift B (15:45 - 00:30)"
+        else -> "Shift C (00:30 - 07:00)"
+    }
+}
+
+private fun getCurrentDateTimeKolkata(): String {
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+    sdf.timeZone = java.util.TimeZone.getTimeZone("Asia/Kolkata")
+    return sdf.format(java.util.Date())
+}
+
 @Composable
 fun DashboardScreen(
     user: UserEntity,
@@ -93,9 +112,9 @@ fun DashboardScreen(
                 ) {
                     Column {
                         Text(
-                            text = "Shift Active: Morning Shift (06:00 - 14:00)",
+                            text = "Shift: ${getCurrentShiftKolkata()} | IST: ${getCurrentDateTimeKolkata()}",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = Color.White.copy(alpha = 0.8f),
+                                color = Color.White.copy(alpha = 0.9f),
                                 fontWeight = FontWeight.Bold
                             )
                         )
@@ -296,7 +315,7 @@ fun DashboardScreen(
         if (recentPatrols.isEmpty()) {
             item {
                 Text(
-                    text = "No patrol logs recorded yet.",
+                    text = "No patrol data available",
                     style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                 )
             }

@@ -1,5 +1,5 @@
 {
-  "name": "Yamaha Welding Patrol Management System",
+  "name": "Yamaha Patrol",
   "description": "Enterprise maintenance patrol portal for Yamaha manufacturing plants with multi-role access control, patrol checklists, abnormality tracking, and analytics.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
