@@ -18,21 +18,23 @@ jobs:
         with:
           java-version: "17"
           distribution: "temurin"
-          cache: gradle
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
 
       - name: Verify Android Project Structure
         run: |
           pwd
           ls -la
-          test -f gradlew
           test -f settings.gradle.kts
+          test -f build.gradle.kts
           test -d app
-
-      - name: Grant execute permission
-        run: chmod +x gradlew
+          gradle --version
 
       - name: Build Yamaha Patrol Debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: gradle assembleDebug --stacktrace --no-daemon
 
       - name: Verify APK
         run: |
