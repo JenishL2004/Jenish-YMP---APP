@@ -25,25 +25,32 @@ jobs:
           gradle-version: "9.3.1"
           validate-wrappers: false
 
-      - name: Verify Android Project Structure
+      - name: Ensure Debug Keystore
         run: |
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Verify Environment
+        run: |
+          java -version
+          gradle --version
           pwd
           ls -la
           test -f settings.gradle.kts
           test -f build.gradle.kts
           test -d app
-          gradle --version
 
       - name: Build Yamaha Patrol Debug APK
-        run: gradle assembleDebug --stacktrace --no-daemon
+        run: |
+          gradle assembleDebug --stacktrace --no-daemon --no-build-cache
 
       - name: Verify APK
         run: |
-          ls -lah app/build/outputs/apk/debug/
           test -f app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload Yamaha Patrol APK
         uses: actions/upload-artifact@v4
         with:
           name: Yamaha-Patrol-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+
