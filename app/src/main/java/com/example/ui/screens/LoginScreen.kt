@@ -71,7 +71,7 @@ fun LoginScreen(
     modifier: Modifier = Modifier
 ) {
     var username by remember { mutableStateOf("admin") }
-    var password by remember { mutableStateOf("Admin@123") }
+    var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
 
     // First Login Password Change Modal State

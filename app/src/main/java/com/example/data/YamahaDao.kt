@@ -17,6 +17,9 @@ interface YamahaDao {
     @Query("SELECT * FROM users ORDER BY employeeName ASC")
     fun getAllUsers(): Flow<List<UserEntity>>
 
+    @Query("SELECT * FROM users")
+    suspend fun getAllUsersDirect(): List<UserEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUser(user: UserEntity)
 
@@ -30,6 +33,9 @@ interface YamahaDao {
     @Query("SELECT * FROM shops ORDER BY shopName ASC")
     fun getAllShops(): Flow<List<ShopEntity>>
 
+    @Query("SELECT * FROM shops")
+    suspend fun getAllShopsDirect(): List<ShopEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertShop(shop: ShopEntity): Long
 
@@ -42,6 +48,9 @@ interface YamahaDao {
     // --- LINES ---
     @Query("SELECT * FROM lines ORDER BY lineName ASC")
     fun getAllLines(): Flow<List<LineEntity>>
+
+    @Query("SELECT * FROM lines")
+    suspend fun getAllLinesDirect(): List<LineEntity>
 
     @Query("SELECT * FROM lines WHERE shopId = :shopId ORDER BY lineName ASC")
     fun getLinesForShop(shopId: Int): Flow<List<LineEntity>>
@@ -59,6 +68,9 @@ interface YamahaDao {
     @Query("SELECT * FROM machines ORDER BY machineName ASC")
     fun getAllMachines(): Flow<List<MachineEntity>>
 
+    @Query("SELECT * FROM machines")
+    suspend fun getAllMachinesDirect(): List<MachineEntity>
+
     @Query("SELECT * FROM machines WHERE lineId = :lineId ORDER BY machineName ASC")
     fun getMachinesForLine(lineId: Int): Flow<List<MachineEntity>>
 
@@ -74,6 +86,9 @@ interface YamahaDao {
     // --- PATROL POINTS ---
     @Query("SELECT * FROM patrol_points ORDER BY sequenceNo ASC")
     fun getAllPatrolPoints(): Flow<List<PatrolPointEntity>>
+
+    @Query("SELECT * FROM patrol_points")
+    suspend fun getAllPatrolPointsDirect(): List<PatrolPointEntity>
 
     @Query("SELECT * FROM patrol_points WHERE machineId = :machineId AND active = 1 ORDER BY sequenceNo ASC")
     fun getPointsForMachine(machineId: Int): Flow<List<PatrolPointEntity>>
@@ -104,6 +119,9 @@ interface YamahaDao {
     @Query("SELECT * FROM patrol_logs ORDER BY timestamp DESC")
     fun getAllPatrolLogs(): Flow<List<PatrolLogEntity>>
 
+    @Query("SELECT * FROM patrol_logs")
+    suspend fun getAllPatrolLogsDirect(): List<PatrolLogEntity>
+
     @Query("SELECT * FROM patrol_point_results WHERE patrolLogId = :logId")
     suspend fun getResultsForLog(logId: Int): List<PatrolPointResultEntity>
 
@@ -113,6 +131,9 @@ interface YamahaDao {
 
     @Query("SELECT * FROM abnormalities ORDER BY timestamp DESC")
     fun getAllAbnormalities(): Flow<List<AbnormalityEntity>>
+
+    @Query("SELECT * FROM abnormalities")
+    suspend fun getAllAbnormalitiesDirect(): List<AbnormalityEntity>
 
     @Query("SELECT * FROM abnormalities WHERE status = :status ORDER BY priority DESC, timestamp DESC")
     fun getAbnormalitiesByStatus(status: String): Flow<List<AbnormalityEntity>>
@@ -126,6 +147,19 @@ interface YamahaDao {
 
     @Query("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200")
     fun getAllAuditLogs(): Flow<List<AuditLogEntity>>
+
+    // --- CLEAR TRANSACTIONAL DATA ---
+    @Query("DELETE FROM patrol_logs")
+    suspend fun deleteAllPatrolLogs()
+
+    @Query("DELETE FROM patrol_point_results")
+    suspend fun deleteAllPatrolPointResults()
+
+    @Query("DELETE FROM abnormalities")
+    suspend fun deleteAllAbnormalities()
+
+    @Query("DELETE FROM audit_logs")
+    suspend fun deleteAllAuditLogs()
 
     // --- STATS & COUNTS ---
     @Query("SELECT COUNT(*) FROM patrol_logs")

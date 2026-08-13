@@ -315,7 +315,7 @@ fun DashboardScreen(
         if (recentPatrols.isEmpty()) {
             item {
                 Text(
-                    text = "No patrol data available",
+                    text = "No patrol records found",
                     style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                 )
             }

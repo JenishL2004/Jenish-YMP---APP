@@ -1,5 +1,22 @@
 package com.example.ui.screens
 
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.content.ContentValues
+import android.provider.MediaStore
+import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintManager
+import android.print.PrintDocumentInfo
+import android.os.CancellationSignal
+import android.os.Bundle
+import android.os.ParcelFileDescriptor
+import android.graphics.pdf.PdfDocument
+import android.graphics.Paint
+import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -62,6 +79,115 @@ import com.example.ui.theme.StatusNormal
 import com.example.ui.theme.YamahaBlue
 import com.example.ui.theme.YamahaRed
 
+private fun saveCsvToDownloads(context: Context, fileName: String, content: String): Boolean {
+    return try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { os ->
+                    os.write(content.toByteArray(Charsets.UTF_8))
+                }
+                true
+            } else false
+        } else {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val file = java.io.File(downloadsDir, fileName)
+            file.writeText(content, Charsets.UTF_8)
+            true
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
+    }
+}
+
+private fun printPatrolPdf(context: Context, log: PatrolLogEntity) {
+    try {
+        val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+        val jobName = "Yamaha_Patrol_Report_${log.patrolNumber}"
+        printManager?.print(
+            jobName,
+            object : PrintDocumentAdapter() {
+                override fun onLayout(
+                    oldAttributes: PrintAttributes?,
+                    newAttributes: PrintAttributes?,
+                    cancellationSignal: CancellationSignal?,
+                    callback: LayoutResultCallback?,
+                    extras: Bundle?
+                ) {
+                    if (cancellationSignal?.isCanceled == true) {
+                        callback?.onLayoutCancelled()
+                        return
+                    }
+                    val info = PrintDocumentInfo.Builder("$jobName.pdf")
+                        .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                        .setPageCount(1)
+                        .build()
+                    callback?.onLayoutFinished(info, true)
+                }
+
+                override fun onWrite(
+                    pages: Array<out android.print.PageRange>?,
+                    destination: ParcelFileDescriptor?,
+                    cancellationSignal: CancellationSignal?,
+                    callback: WriteResultCallback?
+                ) {
+                    val pdfDocument = PdfDocument()
+                    val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4
+                    val page = pdfDocument.startPage(pageInfo)
+                    val canvas = page.canvas
+                    val paint = Paint()
+
+                    // Header
+                    paint.color = AndroidColor.RED
+                    paint.textSize = 18f
+                    paint.isFakeBoldText = true
+                    canvas.drawText("YAMAHA MOTOR INDIA - WELDING PATROL REPORT", 40f, 50f, paint)
+
+                    paint.color = AndroidColor.BLACK
+                    paint.textSize = 12f
+                    paint.isFakeBoldText = false
+                    canvas.drawText("Patrol Number: ${log.patrolNumber}", 40f, 90f, paint)
+                    canvas.drawText("Shop / Line: ${log.shopName} / ${log.lineName}", 40f, 110f, paint)
+                    canvas.drawText("Machine: ${log.machineName}", 40f, 130f, paint)
+                    canvas.drawText("Inspector: ${log.employeeName} (${log.employeeId})", 40f, 150f, paint)
+                    canvas.drawText("Shift: ${log.shift}", 40f, 170f, paint)
+                    canvas.drawText("Overall Status: ${log.overallStatus}", 40f, 190f, paint)
+                    canvas.drawText("Notes: ${log.notes}", 40f, 210f, paint)
+
+                    canvas.drawText("Signatures:", 40f, 260f, paint)
+                    canvas.drawText("Inspector: ____________________", 40f, 300f, paint)
+                    canvas.drawText("Supervisor: ___________________", 300f, 300f, paint)
+
+                    pdfDocument.finishPage(page)
+
+                    try {
+                        destination?.let { pfd ->
+                            java.io.FileOutputStream(pfd.fileDescriptor).use { os ->
+                                pdfDocument.writeTo(os)
+                            }
+                        }
+                        callback?.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
+                    } catch (e: Exception) {
+                        callback?.onWriteFailed(e.message)
+                    } finally {
+                        pdfDocument.close()
+                    }
+                }
+            },
+            null
+        )
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
 @Composable
 fun ReportsScreen(
     user: UserEntity,
@@ -69,6 +195,7 @@ fun ReportsScreen(
     onGenerateExport: (reportType: String) -> String,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var selectedReportType by remember { mutableStateOf("DAILY") }
     var exportPreviewContent by remember { mutableStateOf<String?>(null) }
     var showPdfPreviewDialog by remember { mutableStateOf<PatrolLogEntity?>(null) }
@@ -110,7 +237,10 @@ fun ReportsScreen(
 
                 Button(
                     onClick = {
-                        exportPreviewContent = onGenerateExport(selectedReportType)
+                        val csv = onGenerateExport(selectedReportType)
+                        saveCsvToDownloads(context, "Yamaha_Patrol_Export_${selectedReportType}.csv", csv)
+                        exportPreviewContent = csv
+                        Toast.makeText(context, "CSV saved to Downloads", Toast.LENGTH_SHORT).show()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = YamahaBlue),
                     shape = RoundedCornerShape(8.dp),
@@ -215,7 +345,10 @@ fun ReportsScreen(
             onDismissRequest = { showPdfPreviewDialog = null },
             confirmButton = {
                 Button(
-                    onClick = { showPdfPreviewDialog = null },
+                    onClick = {
+                        printPatrolPdf(context, log)
+                        showPdfPreviewDialog = null
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = YamahaBlue)
                 ) {
                     Icon(imageVector = Icons.Default.Print, contentDescription = "Print")
@@ -294,18 +427,8 @@ fun ReportsScreen(
                         Text(text = "Overall Status: ${log.overallStatus}", fontWeight = FontWeight.Bold, color = if (log.overallStatus == "NORMAL") StatusNormal else StatusAbnormal, fontSize = 12.sp)
                         Text(text = "Inspector Remarks: ${log.notes}", fontSize = 11.sp)
 
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(text = "Abnormality Image Evidence (1:1 Mandatory Attachment):", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Image(
-                            painter = painterResource(id = R.drawable.img_welding_machine_1785404965577),
-                            contentDescription = "Abnormality Evidence",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                        )
+                        Text(text = if (log.overallStatus == "ABNORMAL") "Abnormality recorded during patrol round" else "All checkpoints verified normal", fontSize = 10.sp, color = Color.DarkGray)
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -351,13 +474,37 @@ fun ReportsScreen(
         )
     }
 
-    // Excel Report Modal with Image Thumbnails
+    // Excel Report Modal
     if (showExcelPreviewDialog) {
         AlertDialog(
             onDismissRequest = { showExcelPreviewDialog = false },
             confirmButton = {
                 Button(
-                    onClick = { showExcelPreviewDialog = false },
+                    onClick = {
+                        val headers = listOf("Patrol No", "Shop", "Line", "Machine", "Inspector", "Shift", "Status", "Date & Time", "Notes")
+                        val rows = patrolLogs.map { log ->
+                            listOf(
+                                log.patrolNumber,
+                                log.shopName,
+                                log.lineName,
+                                log.machineName,
+                                log.employeeName,
+                                log.shift,
+                                log.overallStatus,
+                                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(log.timestamp)),
+                                log.notes
+                            )
+                        }
+                        val fileName = "Yamaha_Patrol_Report_${System.currentTimeMillis()}.xlsx"
+                        val exportedUri = com.example.data.XlsxExporter.exportToDownloads(context, fileName, headers, rows)
+                        if (exportedUri != null) {
+                            Toast.makeText(context, "Excel (.xlsx) saved to Downloads!", Toast.LENGTH_LONG).show()
+                            com.example.data.XlsxExporter.openExportedFile(context, exportedUri)
+                        } else {
+                            Toast.makeText(context, "Excel export failed", Toast.LENGTH_SHORT).show()
+                        }
+                        showExcelPreviewDialog = false
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1D6F42))
                 ) {
                     Icon(imageVector = Icons.Default.Download, contentDescription = "Download Excel")
@@ -372,7 +519,7 @@ fun ReportsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.TableChart, contentDescription = "Excel", tint = Color(0xFF1D6F42))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Excel Report Preview (Embedded Images)", fontWeight = FontWeight.Bold)
+                    Text("Excel Report Preview", fontWeight = FontWeight.Bold)
                 }
             },
             text = {
@@ -382,35 +529,35 @@ fun ReportsScreen(
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text(
-                        text = "Sheet: Abnormality_Log_Report.xlsx",
+                        text = "Sheet: Yamaha_Patrol_Report.xlsx (${patrolLogs.size} records)",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = Color(0xFF1D6F42))
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    patrolLogs.take(3).forEach { log ->
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F7F2)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                    if (patrolLogs.isEmpty()) {
+                        Text(
+                            text = "No patrol records found to export.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    } else {
+                        patrolLogs.take(5).forEach { log ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F7F2)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
                             ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.img_welding_machine_1785404965577),
-                                    contentDescription = "Embedded Image Thumbnail",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(text = "${log.patrolNumber} | ${log.machineName}", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                    Text(text = "Shop: ${log.shopName} | Status: ${log.overallStatus}", fontSize = 10.sp)
-                                    Text(text = "Embedded Photo: img_welding_abnormal_01.jpg", fontSize = 9.sp, color = Color.Gray)
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = "${log.patrolNumber} | ${log.machineName}", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                        Text(text = "Shop: ${log.shopName} | Line: ${log.lineName} | Status: ${log.overallStatus}", fontSize = 10.sp)
+                                        Text(text = "Inspector: ${log.employeeName} (${log.shift})", fontSize = 9.sp, color = Color.Gray)
+                                    }
                                 }
                             }
                         }

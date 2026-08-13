@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import coil.compose.AsyncImage
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -220,6 +221,19 @@ fun AbnormalityCard(
                 text = "Checkpoint: ${item.checkpointName}",
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
             )
+
+            if (!item.photoUri.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                AsyncImage(
+                    model = item.photoUri,
+                    contentDescription = "Abnormality Evidence",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+            }
 
             Spacer(modifier = Modifier.height(6.dp))
 

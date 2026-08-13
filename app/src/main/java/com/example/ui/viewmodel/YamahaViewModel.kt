@@ -1,6 +1,8 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AbnormalityEntity
@@ -39,6 +41,20 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
     init {
         val database = YamahaDatabase.getDatabase(application, viewModelScope)
         repository = YamahaRepository(database.yamahaDao())
+        viewModelScope.launch {
+            repository.syncFromSupabase()
+        }
+    }
+
+    fun syncData() {
+        viewModelScope.launch {
+            repository.syncFromSupabase()
+            _userMessage.value = "Central database synced with Supabase"
+        }
+    }
+
+    suspend fun uploadEvidencePhoto(context: Context, uri: Uri): String? {
+        return repository.uploadEvidencePhoto(context, uri)
     }
 
     // --- Current Session State ---
@@ -117,9 +133,12 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
                 _currentUser.value = user
+
+                val prefs = getApplication<Application>().getSharedPreferences("yamaha_prefs", Context.MODE_PRIVATE)
+                val passwordChangedInPrefs = prefs.getBoolean("admin_password_changed_${user.username}", false)
                 
-                // Force password change on first login if default password Admin@123 is used
-                if (passwordInput == "Admin@123" || user.passwordHash == "Admin@123") {
+                // Force password change ONLY if password is default "Admin@123" AND not yet updated in prefs
+                if (user.passwordHash == "Admin@123" && !passwordChangedInPrefs) {
                     _mustChangePassword.value = true
                 } else {
                     _mustChangePassword.value = false
@@ -144,6 +163,10 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
             _currentUser.value = updatedUser
             _mustChangePassword.value = false
             _currentScreen.value = Screen.Dashboard
+
+            val prefs = getApplication<Application>().getSharedPreferences("yamaha_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("admin_password_changed_${user.username}", true).apply()
+
             repository.logAudit(updatedUser, "PASSWORD_CHANGED", "Authentication", "Changed default password on initial login")
             _userMessage.value = "Password updated successfully!"
         }
@@ -294,8 +317,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
         machineId: Int,
         shift: String,
         notes: String,
-        checkpointResults: List<Triple<PatrolPointEntity, Pair<String, String>, Triple<String, String, Triple<String, String?, String?>>>> 
-        // Point -> (Status, Remarks) -> (ProblemDescription, Severity, (Countermeasure, PhotoUri, Category))
+        checkpointResults: List<Triple<PatrolPointEntity, Pair<String, String>, Triple<String, String, Triple<String, String?, String?>>>>
     ) {
         val user = _currentUser.value ?: return
         viewModelScope.launch {
@@ -324,7 +346,23 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 val probDesc = detail.first
                 val severity = detail.second
                 val countermeasure = detail.third.first
-                val photoUri = detail.third.second
+                val localPhotoUri = detail.third.second
+                
+                var remotePhotoUrl: String? = localPhotoUri
+                if (!localPhotoUri.isNullOrBlank() && (localPhotoUri.startsWith("content://") || localPhotoUri.startsWith("file://"))) {
+                    try {
+                        val uploaded = repository.uploadEvidencePhoto(getApplication(), Uri.parse(localPhotoUri))
+                        if (uploaded != null) {
+                            remotePhotoUrl = uploaded
+                        } else {
+                            remotePhotoUrl = null
+                            _userMessage.value = "Warning: Failed to upload evidence photo to Supabase storage"
+                        }
+                    } catch (e: Exception) {
+                        remotePhotoUrl = null
+                    }
+                }
+
                 PatrolPointResultEntity(
                     patrolLogId = 0,
                     patrolPointId = point.id,
@@ -336,20 +374,20 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                     problemDescription = probDesc,
                     severity = severity,
                     countermeasure = countermeasure,
-                    photoUri = photoUri
+                    photoUri = remotePhotoUrl
                 )
             }
 
             // Create individual abnormality entry for EACH abnormal checkpoint
             val abnormalEntities = mutableListOf<AbnormalityEntity>()
             var abCounter = 1
-            checkpointResults.filter { it.second.first == "ABNORMAL" }.forEach { (point, statusAndRemarks, detail) ->
+            checkpointResults.filter { it.second.first == "ABNORMAL" }.forEachIndexed { idx, (point, statusAndRemarks, detail) ->
                 val abNo = "ABN-$dateStr-${((timeMs + abCounter) % 1000000).toString().padStart(6, '0')}"
                 abCounter++
                 val probDesc = detail.first.ifBlank { statusAndRemarks.second }
                 val severity = detail.second
                 val countermeasure = detail.third.first
-                val photoUri = detail.third.second
+                val photoUrl = resultsEntities.getOrNull(checkpointResults.indexOfFirst { it.first.id == point.id })?.photoUri
 
                 abnormalEntities.add(
                     AbnormalityEntity(
@@ -369,7 +407,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                         status = "PENDING",
                         reportedBy = "${user.employeeName} (${user.employeeId})",
                         timestamp = timeMs,
-                        photoUri = photoUri
+                        photoUri = photoUrl
                     )
                 )
             }
@@ -453,23 +491,25 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // --- Report CSV / Text Generation for Export ---
-    fun generateReportData(reportType: String): String {
-        val user = _currentUser.value
+    fun clearTransactionalData() {
+        val user = _currentUser.value ?: return
+        if (user.role != "ADMIN") return
         viewModelScope.launch {
-            user?.let { repository.logAudit(it, "DOWNLOAD", "Reports", "Exported $reportType Maintenance Report") }
+            repository.clearTransactionalData()
+            repository.logAudit(user, "CLEAR_DATA", "System Management", "Cleared test/demo transactional records")
+            _userMessage.value = "All test/demo transactional records cleared successfully!"
         }
+    }
 
+    fun generateReportData(reportType: String): String {
         val logs = allPatrolLogs.value
         val sb = StringBuilder()
-        sb.append("YAMAHA MOTOR INDIA - MAINTENANCE PATROL REPORT ($reportType)\n")
-        sb.append("Generated On: 2026-07-30 | Exported By: ${user?.employeeName ?: "System"}\n")
-        sb.append("--------------------------------------------------------------------------------\n")
-        sb.append("Log ID,Date/Time,Shop,Line,Machine,Inspector,Status,Notes\n")
+        sb.append("Patrol Number,Shop Name,Line Name,Machine Name,Inspector Name,Employee ID,Shift,Timestamp,Overall Status,Notes\n")
         logs.forEach { log ->
-            sb.append("${log.id},${log.timestamp},\"${log.shopName}\",\"${log.lineName}\",\"${log.machineName}\",\"${log.employeeName}\",${log.overallStatus},\"${log.notes}\"\n")
+            val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(log.timestamp))
+            val cleanNotes = log.notes.replace(",", ";").replace("\n", " ")
+            sb.append("${log.patrolNumber},${log.shopName},${log.lineName},${log.machineName},${log.employeeName},${log.employeeId},${log.shift},$dateStr,${log.overallStatus},$cleanNotes\n")
         }
         return sb.toString()
     }
 }
-

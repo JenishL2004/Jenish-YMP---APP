@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import coil.compose.AsyncImage
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -401,6 +405,22 @@ fun StepCheckpointsExecution(
     onNotesChange: (String) -> Unit,
     onSubmit: () -> Unit
 ) {
+    // Photo Attachment State
+    var activePhotoPickerPointId by remember { mutableStateOf<Int?>(null) }
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { selectedUri ->
+            activePhotoPickerPointId?.let { pointId ->
+                val currentDetail = checkpointDetail[pointId]
+                val probDesc = currentDetail?.first ?: ""
+                val severity = currentDetail?.second ?: "HIGH"
+                val countermeasure = currentDetail?.third?.first ?: ""
+                val category = currentDetail?.third?.third ?: "Welding"
+                checkpointDetail[pointId] = Triple(probDesc, severity, Triple(countermeasure, selectedUri.toString(), category))
+            }
+        }
+    }
     // Check if any abnormal checkpoint is missing required problem description or photo
     val abnormalCheckpoints = points.filter { pt ->
         val status = checkpointState[pt.id]?.first ?: "NORMAL"
@@ -614,8 +634,8 @@ fun StepCheckpointsExecution(
                             ) {
                                 Button(
                                     onClick = {
-                                        val newPhoto = if (photoUri.isNullOrBlank()) "drawable/img_welding_machine_1785404965577" else null
-                                        checkpointDetail[pt.id] = Triple(probDesc, severity, Triple(countermeasure, newPhoto, pt.category))
+                                        activePhotoPickerPointId = pt.id
+                                        photoPickerLauncher.launch("image/*")
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = if (!photoUri.isNullOrBlank()) StatusNormal else YamahaRed
@@ -625,20 +645,20 @@ fun StepCheckpointsExecution(
                                     Icon(imageVector = if (!photoUri.isNullOrBlank()) Icons.Default.Check else Icons.Default.AddAPhoto, contentDescription = "Photo", modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = if (!photoUri.isNullOrBlank()) "Photo Attached" else "ATTACH MANDATORY PHOTO",
+                                        text = if (!photoUri.isNullOrBlank()) "Photo Attached (Tap to Change)" else "ATTACH EVIDENCE PHOTO",
                                         fontSize = 11.sp
                                     )
                                 }
                             }
 
                             if (!photoUri.isNullOrBlank()) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.img_welding_machine_1785404965577),
-                                    contentDescription = "Abnormality Evidence",
+                                AsyncImage(
+                                    model = photoUri,
+                                    contentDescription = "Abnormality Evidence Photo",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(100.dp)
+                                        .height(140.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                 )
                             }

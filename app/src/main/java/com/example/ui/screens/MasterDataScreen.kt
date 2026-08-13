@@ -82,6 +82,7 @@ fun MasterDataScreen(
     onAddPoint: (machineId: Int, machineName: String, pointName: String, category: String, standardValue: String, sequenceNo: Int, frequency: String, description: String) -> Unit,
     onRevisePoint: (point: PatrolPointEntity, newStandard: String, newCategory: String, newFreq: String, reason: String) -> Unit = { _, _, _, _, _ -> },
     onDeletePoint: (pointId: Int) -> Unit = {},
+    onClearTransactionalData: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedTabIndex by remember { mutableStateOf(0) }
@@ -94,6 +95,7 @@ fun MasterDataScreen(
     var showAddUserDialog by remember { mutableStateOf(false) }
     var showRevisePointDialog by remember { mutableStateOf<PatrolPointEntity?>(null) }
     var showRevisionHistoryDialog by remember { mutableStateOf(false) }
+    var showClearDataDialog by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -103,7 +105,8 @@ fun MasterDataScreen(
                     .fillMaxWidth()
                     .background(YamahaBlue)
                     .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
                     text = "MASTER SETTINGS",
@@ -112,6 +115,12 @@ fun MasterDataScreen(
                         color = Color.White
                     )
                 )
+
+                if (currentUser.role == "ADMIN") {
+                    TextButton(onClick = { showClearDataDialog = true }) {
+                        Text("Clear Demo Data", color = Color.Yellow, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
 
             TabRow(
@@ -253,6 +262,31 @@ fun MasterDataScreen(
         RevisionHistoryModal(
             revisions = revisions,
             onDismiss = { showRevisionHistoryDialog = false }
+        )
+    }
+
+    if (showClearDataDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDataDialog = false },
+            title = { Text("Clear Test & Demo Data", fontWeight = FontWeight.Bold, color = StatusAbnormal) },
+            text = {
+                Text(
+                    text = "This action will clear all test/demo patrol inspection logs, abnormality tickets, and audit history records.\n\nMaster data (Shops, Lines, Machines, Patrol Points, Users) will be preserved.",
+                    fontSize = 12.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onClearTransactionalData()
+                        showClearDataDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = YamahaRed)
+                ) { Text("Confirm Clear Data") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDataDialog = false }) { Text("Cancel") }
+            }
         )
     }
 }

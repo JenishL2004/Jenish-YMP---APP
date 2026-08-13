@@ -295,7 +295,8 @@ fun YamahaMainContent(viewModel: YamahaViewModel) {
             onRevisePoint = { pt, std, cat, freq, reason ->
               viewModel.revisePatrolPoint(pt, std, cat, freq, reason)
             },
-            onDeletePoint = { ptId -> viewModel.deletePatrolPoint(ptId) }
+            onDeletePoint = { ptId -> viewModel.deletePatrolPoint(ptId) },
+            onClearTransactionalData = { viewModel.clearTransactionalData() }
           )
 
           Screen.Reports -> ReportsScreen(
