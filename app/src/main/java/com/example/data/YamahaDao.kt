@@ -125,6 +125,9 @@ interface YamahaDao {
     @Query("SELECT * FROM patrol_point_results WHERE patrolLogId = :logId")
     suspend fun getResultsForLog(logId: Int): List<PatrolPointResultEntity>
 
+    @Query("SELECT * FROM patrol_point_results")
+    suspend fun getAllResultsDirect(): List<PatrolPointResultEntity>
+
     // --- ABNORMALITY MANAGEMENT ---
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAbnormality(abnormality: AbnormalityEntity): Long

@@ -139,8 +139,11 @@ fun AbnormalityTrackerScreen(
                 }
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(filteredList) { item ->
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth()
+            ) {
+                items(filteredList, key = { it.id }) { item ->
                     AbnormalityCard(
                         item = item,
                         currentUser = user,

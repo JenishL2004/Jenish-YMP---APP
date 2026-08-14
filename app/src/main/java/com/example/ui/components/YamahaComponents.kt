@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -61,6 +62,7 @@ fun YamahaTopHeader(
     title: String,
     user: UserEntity?,
     onLogoutClick: () -> Unit,
+    onSyncClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -150,7 +152,17 @@ fun YamahaTopHeader(
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = onSyncClick,
+                        modifier = Modifier.testTag("sync_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Sync with Supabase",
+                            tint = Color.White
+                        )
+                    }
                     IconButton(
                         onClick = onLogoutClick,
                         modifier = Modifier.testTag("logout_button")

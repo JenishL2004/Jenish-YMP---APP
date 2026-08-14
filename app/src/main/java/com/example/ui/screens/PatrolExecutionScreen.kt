@@ -498,7 +498,7 @@ fun StepCheckpointsExecution(
         }
 
         // List of Patrol Checkpoints
-        items(points) { pt ->
+        items(points, key = { it.id }) { pt ->
             val currentEval = checkpointState[pt.id] ?: ("NORMAL" to "Inspected & OK")
             val currentDetail = checkpointDetail[pt.id] ?: Triple("", "MAJOR", Triple("", null, pt.category))
 

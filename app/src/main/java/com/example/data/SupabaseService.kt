@@ -19,15 +19,14 @@ class SupabaseService(
     private var apiKey: String = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrbmxtZHlsbXZlcW1zZmZld29vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAxNTA0MDAwMH0.placeholder"
 ) {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     init {
-        // Attempt to load from BuildConfig if present
         try {
             val buildConfigClass = Class.forName("com.example.BuildConfig")
             val urlField = buildConfigClass.getField("SUPABASE_URL")
@@ -82,7 +81,7 @@ class SupabaseService(
         return builder.build()
     }
 
-    // --- Users ---
+    // --- USERS ---
     suspend fun fetchUsers(): List<UserEntity>? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null
         try {
@@ -120,8 +119,8 @@ class SupabaseService(
         }
     }
 
-    suspend fun upsertUser(user: UserEntity): Boolean = withContext(Dispatchers.IO) {
-        if (!isConfigured()) return@withContext false
+    suspend fun upsertUser(user: UserEntity): UserEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
         try {
             val obj = JSONObject().apply {
                 put("employee_id", user.employeeId)
@@ -136,11 +135,18 @@ class SupabaseService(
                 put("created_by", user.createdBy)
             }
             val arr = JSONArray().put(obj)
-            val req = buildRequest("users", "POST", arr.toString(), "resolution=merge-duplicates")
-            client.newCall(req).execute().use { it.isSuccessful }
+            val req = buildRequest("users", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    user
+                } else {
+                    Log.w("SupabaseService", "Upsert user failed: ${response.code}")
+                    null
+                }
+            }
         } catch (e: Exception) {
             Log.w("SupabaseService", "Unable to upsert user to Supabase", e)
-            false
+            null
         }
     }
 
@@ -155,11 +161,11 @@ class SupabaseService(
         }
     }
 
-    // --- Shops ---
+    // --- SHOPS ---
     suspend fun fetchShops(): List<ShopEntity>? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null
         try {
-            val req = buildRequest("shops?select=*", "GET")
+            val req = buildRequest("shops?select=*&order=id.asc", "GET")
             client.newCall(req).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.w("SupabaseService", "Fetch shops failed with HTTP ${response.code}")
@@ -185,19 +191,34 @@ class SupabaseService(
         }
     }
 
-    suspend fun upsertShop(shop: ShopEntity): Boolean = withContext(Dispatchers.IO) {
-        if (!isConfigured()) return@withContext false
+    suspend fun upsertShop(shop: ShopEntity): ShopEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
         try {
             val obj = JSONObject().apply {
                 if (shop.id > 0) put("id", shop.id)
                 put("shop_name", shop.shopName)
             }
             val arr = JSONArray().put(obj)
-            val req = buildRequest("shops", "POST", arr.toString(), "resolution=merge-duplicates")
-            client.newCall(req).execute().use { it.isSuccessful }
+            val req = buildRequest("shops", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    val respStr = response.body?.string()
+                    var finalId = shop.id
+                    if (!respStr.isNullOrBlank()) {
+                        val returnedArr = JSONArray(respStr)
+                        if (returnedArr.length() > 0) {
+                            finalId = returnedArr.getJSONObject(0).optInt("id", shop.id)
+                        }
+                    }
+                    shop.copy(id = finalId)
+                } else {
+                    Log.w("SupabaseService", "Upsert shop failed: ${response.code}")
+                    null
+                }
+            }
         } catch (e: Exception) {
             Log.w("SupabaseService", "Unable to upsert shop to Supabase", e)
-            false
+            null
         }
     }
 
@@ -212,11 +233,11 @@ class SupabaseService(
         }
     }
 
-    // --- Lines ---
+    // --- LINES ---
     suspend fun fetchLines(): List<LineEntity>? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null
         try {
-            val req = buildRequest("lines?select=*", "GET")
+            val req = buildRequest("lines?select=*&order=id.asc", "GET")
             client.newCall(req).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.w("SupabaseService", "Fetch lines failed with HTTP ${response.code}")
@@ -230,8 +251,8 @@ class SupabaseService(
                     list.add(
                         LineEntity(
                             id = obj.optInt("id"),
-                            shopId = obj.optInt("shop_id"),
-                            shopName = obj.optString("shop_name"),
+                            shopId = obj.optInt("shop_id", 1),
+                            shopName = obj.optString("shop_name", "Weld Shop"),
                             lineName = obj.optString("line_name")
                         )
                     )
@@ -244,8 +265,8 @@ class SupabaseService(
         }
     }
 
-    suspend fun upsertLine(line: LineEntity): Boolean = withContext(Dispatchers.IO) {
-        if (!isConfigured()) return@withContext false
+    suspend fun upsertLine(line: LineEntity): LineEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
         try {
             val obj = JSONObject().apply {
                 if (line.id > 0) put("id", line.id)
@@ -254,11 +275,26 @@ class SupabaseService(
                 put("line_name", line.lineName)
             }
             val arr = JSONArray().put(obj)
-            val req = buildRequest("lines", "POST", arr.toString(), "resolution=merge-duplicates")
-            client.newCall(req).execute().use { it.isSuccessful }
+            val req = buildRequest("lines", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    val respStr = response.body?.string()
+                    var finalId = line.id
+                    if (!respStr.isNullOrBlank()) {
+                        val returnedArr = JSONArray(respStr)
+                        if (returnedArr.length() > 0) {
+                            finalId = returnedArr.getJSONObject(0).optInt("id", line.id)
+                        }
+                    }
+                    line.copy(id = finalId)
+                } else {
+                    Log.w("SupabaseService", "Upsert line failed: ${response.code}")
+                    null
+                }
+            }
         } catch (e: Exception) {
             Log.w("SupabaseService", "Unable to upsert line to Supabase", e)
-            false
+            null
         }
     }
 
@@ -273,11 +309,11 @@ class SupabaseService(
         }
     }
 
-    // --- Machines ---
+    // --- MACHINES ---
     suspend fun fetchMachines(): List<MachineEntity>? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null
         try {
-            val req = buildRequest("machines?select=*", "GET")
+            val req = buildRequest("machines?select=*&order=id.asc", "GET")
             client.newCall(req).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.w("SupabaseService", "Fetch machines failed with HTTP ${response.code}")
@@ -291,8 +327,8 @@ class SupabaseService(
                     list.add(
                         MachineEntity(
                             id = obj.optInt("id"),
-                            lineId = obj.optInt("line_id"),
-                            shopName = obj.optString("shop_name"),
+                            lineId = obj.optInt("line_id", 1),
+                            shopName = obj.optString("shop_name", "Weld Shop"),
                             lineName = obj.optString("line_name"),
                             machineName = obj.optString("machine_name"),
                             machineType = obj.optString("machine_type"),
@@ -310,8 +346,8 @@ class SupabaseService(
         }
     }
 
-    suspend fun upsertMachine(machine: MachineEntity): Boolean = withContext(Dispatchers.IO) {
-        if (!isConfigured()) return@withContext false
+    suspend fun upsertMachine(machine: MachineEntity): MachineEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
         try {
             val obj = JSONObject().apply {
                 if (machine.id > 0) put("id", machine.id)
@@ -325,11 +361,26 @@ class SupabaseService(
                 put("status", machine.status)
             }
             val arr = JSONArray().put(obj)
-            val req = buildRequest("machines", "POST", arr.toString(), "resolution=merge-duplicates")
-            client.newCall(req).execute().use { it.isSuccessful }
+            val req = buildRequest("machines", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    val respStr = response.body?.string()
+                    var finalId = machine.id
+                    if (!respStr.isNullOrBlank()) {
+                        val returnedArr = JSONArray(respStr)
+                        if (returnedArr.length() > 0) {
+                            finalId = returnedArr.getJSONObject(0).optInt("id", machine.id)
+                        }
+                    }
+                    machine.copy(id = finalId)
+                } else {
+                    Log.w("SupabaseService", "Upsert machine failed: ${response.code}")
+                    null
+                }
+            }
         } catch (e: Exception) {
             Log.w("SupabaseService", "Unable to upsert machine to Supabase", e)
-            false
+            null
         }
     }
 
@@ -344,11 +395,11 @@ class SupabaseService(
         }
     }
 
-    // --- Patrol Points ---
+    // --- PATROL POINTS ---
     suspend fun fetchPatrolPoints(): List<PatrolPointEntity>? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null
         try {
-            val req = buildRequest("patrol_points?select=*", "GET")
+            val req = buildRequest("patrol_points?select=*&order=sequence_no.asc", "GET")
             client.newCall(req).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.w("SupabaseService", "Fetch patrol points failed with HTTP ${response.code}")
@@ -362,13 +413,13 @@ class SupabaseService(
                     list.add(
                         PatrolPointEntity(
                             id = obj.optInt("id"),
-                            machineId = obj.optInt("machine_id"),
+                            machineId = obj.optInt("machine_id", 1),
                             machineName = obj.optString("machine_name"),
                             pointName = obj.optString("point_name"),
-                            category = obj.optString("category"),
+                            category = obj.optString("category", "Robot"),
                             standardValue = obj.optString("standard_value"),
-                            sequenceNo = obj.optInt("sequence_no"),
-                            frequency = obj.optString("frequency"),
+                            sequenceNo = obj.optInt("sequence_no", 1),
+                            frequency = obj.optString("frequency", "Every Shift"),
                             active = obj.optBoolean("active", true),
                             revisionNumber = obj.optInt("revision_number", 1),
                             description = obj.optString("description")
@@ -383,8 +434,8 @@ class SupabaseService(
         }
     }
 
-    suspend fun upsertPatrolPoint(point: PatrolPointEntity): Boolean = withContext(Dispatchers.IO) {
-        if (!isConfigured()) return@withContext false
+    suspend fun upsertPatrolPoint(point: PatrolPointEntity): PatrolPointEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
         try {
             val obj = JSONObject().apply {
                 if (point.id > 0) put("id", point.id)
@@ -400,11 +451,26 @@ class SupabaseService(
                 put("description", point.description)
             }
             val arr = JSONArray().put(obj)
-            val req = buildRequest("patrol_points", "POST", arr.toString(), "resolution=merge-duplicates")
-            client.newCall(req).execute().use { it.isSuccessful }
+            val req = buildRequest("patrol_points", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    val respStr = response.body?.string()
+                    var finalId = point.id
+                    if (!respStr.isNullOrBlank()) {
+                        val returnedArr = JSONArray(respStr)
+                        if (returnedArr.length() > 0) {
+                            finalId = returnedArr.getJSONObject(0).optInt("id", point.id)
+                        }
+                    }
+                    point.copy(id = finalId)
+                } else {
+                    Log.w("SupabaseService", "Upsert patrol point failed: ${response.code}")
+                    null
+                }
+            }
         } catch (e: Exception) {
             Log.w("SupabaseService", "Unable to upsert patrol point to Supabase", e)
-            false
+            null
         }
     }
 
@@ -419,11 +485,84 @@ class SupabaseService(
         }
     }
 
-    // --- Patrol Logs ---
+    // --- REVISIONS ---
+    suspend fun fetchRevisions(): List<PatrolPointRevisionEntity>? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
+        try {
+            val req = buildRequest("patrol_point_revisions?select=*&order=revision_date.desc", "GET")
+            client.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseService", "Fetch revisions failed with HTTP ${response.code}")
+                    return@withContext null
+                }
+                val bodyStr = response.body?.string() ?: return@withContext emptyList()
+                val array = JSONArray(bodyStr)
+                val list = mutableListOf<PatrolPointRevisionEntity>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(
+                        PatrolPointRevisionEntity(
+                            id = obj.optInt("id"),
+                            pointId = obj.optInt("point_id"),
+                            revisionNumber = obj.optInt("revision_number", 1),
+                            revisionDate = obj.optLong("revision_date", System.currentTimeMillis()),
+                            revisedBy = obj.optString("revised_by"),
+                            reason = obj.optString("reason"),
+                            oldValue = obj.optString("old_value"),
+                            newValue = obj.optString("new_value")
+                        )
+                    )
+                }
+                list
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseService", "Unable to fetch revisions from Supabase", e)
+            null
+        }
+    }
+
+    suspend fun upsertRevision(rev: PatrolPointRevisionEntity): PatrolPointRevisionEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
+        try {
+            val obj = JSONObject().apply {
+                if (rev.id > 0) put("id", rev.id)
+                put("point_id", rev.pointId)
+                put("revision_number", rev.revisionNumber)
+                put("revision_date", rev.revisionDate)
+                put("revised_by", rev.revisedBy)
+                put("reason", rev.reason)
+                put("old_value", rev.oldValue)
+                put("new_value", rev.newValue)
+            }
+            val arr = JSONArray().put(obj)
+            val req = buildRequest("patrol_point_revisions", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    val respStr = response.body?.string()
+                    var finalId = rev.id
+                    if (!respStr.isNullOrBlank()) {
+                        val returnedArr = JSONArray(respStr)
+                        if (returnedArr.length() > 0) {
+                            finalId = returnedArr.getJSONObject(0).optInt("id", rev.id)
+                        }
+                    }
+                    rev.copy(id = finalId)
+                } else {
+                    Log.w("SupabaseService", "Upsert revision failed: ${response.code}")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseService", "Unable to upsert revision to Supabase", e)
+            null
+        }
+    }
+
+    // --- PATROL LOGS ---
     suspend fun fetchPatrolLogs(): List<PatrolLogEntity>? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null
         try {
-            val req = buildRequest("patrol_logs?select=*", "GET")
+            val req = buildRequest("patrol_logs?select=*&order=timestamp.desc", "GET")
             client.newCall(req).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.w("SupabaseService", "Fetch patrol logs failed with HTTP ${response.code}")
@@ -437,7 +576,8 @@ class SupabaseService(
                     list.add(
                         PatrolLogEntity(
                             id = obj.optInt("id"),
-                            shopName = obj.optString("shop_name"),
+                            patrolNumber = obj.optString("patrol_number", "PTL-${obj.optLong("timestamp", System.currentTimeMillis())}"),
+                            shopName = obj.optString("shop_name", "Weld Shop"),
                             lineName = obj.optString("line_name"),
                             machineName = obj.optString("machine_name"),
                             machineId = obj.optInt("machine_id"),
@@ -458,11 +598,12 @@ class SupabaseService(
         }
     }
 
-    suspend fun upsertPatrolLog(log: PatrolLogEntity): Int = withContext(Dispatchers.IO) {
-        if (!isConfigured()) return@withContext log.id
+    suspend fun upsertPatrolLog(log: PatrolLogEntity): PatrolLogEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
         try {
             val obj = JSONObject().apply {
                 if (log.id > 0) put("id", log.id)
+                put("patrol_number", log.patrolNumber)
                 put("shop_name", log.shopName)
                 put("line_name", log.lineName)
                 put("machine_name", log.machineName)
@@ -475,30 +616,146 @@ class SupabaseService(
                 put("notes", log.notes)
             }
             val arr = JSONArray().put(obj)
-            val req = buildRequest("patrol_logs", "POST", arr.toString(), "return=representation")
+            val req = buildRequest("patrol_logs", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
             client.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val respStr = resp.body?.string()
+                    var finalId = log.id
                     if (!respStr.isNullOrBlank()) {
                         val returnedArr = JSONArray(respStr)
                         if (returnedArr.length() > 0) {
-                            return@withContext returnedArr.getJSONObject(0).optInt("id", log.id)
+                            finalId = returnedArr.getJSONObject(0).optInt("id", log.id)
                         }
                     }
+                    log.copy(id = finalId)
+                } else {
+                    Log.w("SupabaseService", "Upsert patrol log failed: ${resp.code}")
+                    null
                 }
-                log.id
             }
         } catch (e: Exception) {
             Log.w("SupabaseService", "Unable to upsert patrol log to Supabase", e)
-            log.id
+            null
         }
     }
 
-    // --- Abnormalities ---
+    // --- PATROL POINT RESULTS ---
+    suspend fun fetchPatrolPointResults(): List<PatrolPointResultEntity>? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
+        try {
+            val req = buildRequest("patrol_point_results?select=*", "GET")
+            client.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseService", "Fetch patrol point results failed with HTTP ${response.code}")
+                    return@withContext null
+                }
+                val bodyStr = response.body?.string() ?: return@withContext emptyList()
+                val array = JSONArray(bodyStr)
+                val list = mutableListOf<PatrolPointResultEntity>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(
+                        PatrolPointResultEntity(
+                            id = obj.optInt("id"),
+                            patrolLogId = obj.optInt("patrol_log_id"),
+                            patrolPointId = obj.optInt("patrol_point_id"),
+                            checkpointName = obj.optString("checkpoint_name"),
+                            category = obj.optString("category", "Welding"),
+                            standardValue = obj.optString("standard_value"),
+                            status = obj.optString("status", "NORMAL"),
+                            remarks = obj.optString("remarks"),
+                            problemDescription = obj.optString("problem_description"),
+                            severity = obj.optString("severity", "HIGH"),
+                            countermeasure = obj.optString("countermeasure"),
+                            photoUri = if (obj.isNull("photo_uri")) null else obj.optString("photo_uri")
+                        )
+                    )
+                }
+                list
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseService", "Unable to fetch patrol point results from Supabase", e)
+            null
+        }
+    }
+
+    suspend fun upsertPatrolPointResults(results: List<PatrolPointResultEntity>): List<PatrolPointResultEntity>? = withContext(Dispatchers.IO) {
+        if (!isConfigured() || results.isEmpty()) return@withContext results
+        try {
+            val arr = JSONArray()
+            results.forEach { res ->
+                val obj = JSONObject().apply {
+                    if (res.id > 0) put("id", res.id)
+                    put("patrol_log_id", res.patrolLogId)
+                    put("patrol_point_id", res.patrolPointId)
+                    put("checkpoint_name", res.checkpointName)
+                    put("category", res.category)
+                    put("standard_value", res.standardValue)
+                    put("status", res.status)
+                    put("remarks", res.remarks)
+                    put("problem_description", res.problemDescription)
+                    put("severity", res.severity)
+                    put("countermeasure", res.countermeasure)
+                    put("photo_uri", res.photoUri ?: JSONObject.NULL)
+                }
+                arr.put(obj)
+            }
+            val req = buildRequest("patrol_point_results", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    val respStr = response.body?.string()
+                    if (!respStr.isNullOrBlank()) {
+                        val returnedArr = JSONArray(respStr)
+                        val returnedList = mutableListOf<PatrolPointResultEntity>()
+                        for (i in 0 until returnedArr.length()) {
+                            val obj = returnedArr.getJSONObject(i)
+                            returnedList.add(
+                                PatrolPointResultEntity(
+                                    id = obj.optInt("id"),
+                                    patrolLogId = obj.optInt("patrol_log_id"),
+                                    patrolPointId = obj.optInt("patrol_point_id"),
+                                    checkpointName = obj.optString("checkpoint_name"),
+                                    category = obj.optString("category", "Welding"),
+                                    standardValue = obj.optString("standard_value"),
+                                    status = obj.optString("status", "NORMAL"),
+                                    remarks = obj.optString("remarks"),
+                                    problemDescription = obj.optString("problem_description"),
+                                    severity = obj.optString("severity", "HIGH"),
+                                    countermeasure = obj.optString("countermeasure"),
+                                    photoUri = if (obj.isNull("photo_uri")) null else obj.optString("photo_uri")
+                                )
+                            )
+                        }
+                        if (returnedList.isNotEmpty()) return@withContext returnedList
+                    }
+                    results
+                } else {
+                    Log.w("SupabaseService", "Upsert patrol point results failed: ${response.code}")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseService", "Unable to upsert patrol point results to Supabase", e)
+            null
+        }
+    }
+
+    suspend fun deleteAllPatrolPointResults(): Boolean = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext false
+        try {
+            val req = buildRequest("patrol_point_results?id=gt.0", "DELETE")
+            client.newCall(req).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            Log.w("SupabaseService", "Unable to clear patrol point results on Supabase", e)
+            false
+        }
+    }
+
+    // --- ABNORMALITIES ---
     suspend fun fetchAbnormalities(): List<AbnormalityEntity>? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null
         try {
-            val req = buildRequest("abnormalities?select=*", "GET")
+            val req = buildRequest("abnormalities?select=*&order=timestamp.desc", "GET")
             client.newCall(req).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.w("SupabaseService", "Fetch abnormalities failed with HTTP ${response.code}")
@@ -542,8 +799,8 @@ class SupabaseService(
         }
     }
 
-    suspend fun upsertAbnormality(abnormality: AbnormalityEntity): Boolean = withContext(Dispatchers.IO) {
-        if (!isConfigured()) return@withContext false
+    suspend fun upsertAbnormality(abnormality: AbnormalityEntity): AbnormalityEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
         try {
             val obj = JSONObject().apply {
                 if (abnormality.id > 0) put("id", abnormality.id)
@@ -568,11 +825,26 @@ class SupabaseService(
                 put("photo_uri", abnormality.photoUri ?: JSONObject.NULL)
             }
             val arr = JSONArray().put(obj)
-            val req = buildRequest("abnormalities", "POST", arr.toString(), "resolution=merge-duplicates")
-            client.newCall(req).execute().use { it.isSuccessful }
+            val req = buildRequest("abnormalities", "POST", arr.toString(), "resolution=merge-duplicates,return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    val respStr = response.body?.string()
+                    var finalId = abnormality.id
+                    if (!respStr.isNullOrBlank()) {
+                        val returnedArr = JSONArray(respStr)
+                        if (returnedArr.length() > 0) {
+                            finalId = returnedArr.getJSONObject(0).optInt("id", abnormality.id)
+                        }
+                    }
+                    abnormality.copy(id = finalId)
+                } else {
+                    Log.w("SupabaseService", "Upsert abnormality failed: ${response.code}")
+                    null
+                }
+            }
         } catch (e: Exception) {
             Log.w("SupabaseService", "Unable to upsert abnormality to Supabase", e)
-            false
+            null
         }
     }
 
@@ -598,7 +870,89 @@ class SupabaseService(
         }
     }
 
-    // --- Photo Evidence Storage Upload ---
+    // --- AUDIT LOGS ---
+    suspend fun fetchAuditLogs(): List<AuditLogEntity>? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
+        try {
+            val req = buildRequest("audit_logs?select=*&order=timestamp.desc&limit=200", "GET")
+            client.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("SupabaseService", "Fetch audit logs failed with HTTP ${response.code}")
+                    return@withContext null
+                }
+                val bodyStr = response.body?.string() ?: return@withContext emptyList()
+                val array = JSONArray(bodyStr)
+                val list = mutableListOf<AuditLogEntity>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    list.add(
+                        AuditLogEntity(
+                            id = obj.optInt("id"),
+                            employeeId = obj.optString("employee_id"),
+                            employeeName = obj.optString("employee_name"),
+                            action = obj.optString("action"),
+                            module = obj.optString("module"),
+                            details = obj.optString("details"),
+                            timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                        )
+                    )
+                }
+                list
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseService", "Unable to fetch audit logs from Supabase", e)
+            null
+        }
+    }
+
+    suspend fun insertAuditLog(log: AuditLogEntity): AuditLogEntity? = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext null
+        try {
+            val obj = JSONObject().apply {
+                if (log.id > 0) put("id", log.id)
+                put("employee_id", log.employeeId)
+                put("employee_name", log.employeeName)
+                put("action", log.action)
+                put("module", log.module)
+                put("details", log.details)
+                put("timestamp", log.timestamp)
+            }
+            val arr = JSONArray().put(obj)
+            val req = buildRequest("audit_logs", "POST", arr.toString(), "return=representation")
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) {
+                    val respStr = response.body?.string()
+                    var finalId = log.id
+                    if (!respStr.isNullOrBlank()) {
+                        val returnedArr = JSONArray(respStr)
+                        if (returnedArr.length() > 0) {
+                            finalId = returnedArr.getJSONObject(0).optInt("id", log.id)
+                        }
+                    }
+                    log.copy(id = finalId)
+                } else {
+                    Log.w("SupabaseService", "Insert audit log failed: ${response.code}")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseService", "Unable to insert audit log to Supabase", e)
+            null
+        }
+    }
+
+    suspend fun deleteAllAuditLogs(): Boolean = withContext(Dispatchers.IO) {
+        if (!isConfigured()) return@withContext false
+        try {
+            val req = buildRequest("audit_logs?id=gt.0", "DELETE")
+            client.newCall(req).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            Log.w("SupabaseService", "Unable to clear audit logs on Supabase", e)
+            false
+        }
+    }
+
+    // --- PHOTO EVIDENCE STORAGE UPLOAD ---
     suspend fun uploadEvidencePhoto(context: Context, localUri: Uri): String? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null
         try {

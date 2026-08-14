@@ -60,6 +60,11 @@ class MainActivity : ComponentActivity() {
       }
     }
   }
+
+  override fun onResume() {
+    super.onResume()
+    viewModel.syncData(showToast = false)
+  }
 }
 
 @Composable
@@ -120,7 +125,8 @@ fun YamahaMainContent(viewModel: YamahaViewModel) {
             else -> "Yamaha Portal"
           },
           user = user,
-          onLogoutClick = { viewModel.logout() }
+          onLogoutClick = { viewModel.logout() },
+          onSyncClick = { viewModel.syncData(showToast = true) }
         )
       },
       bottomBar = {
@@ -302,6 +308,9 @@ fun YamahaMainContent(viewModel: YamahaViewModel) {
           Screen.Reports -> ReportsScreen(
             user = user,
             patrolLogs = allPatrolLogs,
+            abnormalities = allAbnormalities,
+            onGetResultsForLog = { logId -> viewModel.getResultsForLog(logId) },
+            onGetAllResults = { viewModel.getAllResultsDirect() },
             onGenerateExport = { type -> viewModel.generateReportData(type) }
           )
 

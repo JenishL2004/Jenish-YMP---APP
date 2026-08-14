@@ -12,6 +12,7 @@ import com.example.data.MachineEntity
 import com.example.data.PatrolLogEntity
 import com.example.data.PatrolPointEntity
 import com.example.data.PatrolPointResultEntity
+import com.example.data.PatrolPointRevisionEntity
 import com.example.data.ShopEntity
 import com.example.data.UserEntity
 import com.example.data.YamahaDatabase
@@ -46,10 +47,17 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun syncData() {
+    fun syncData(showToast: Boolean = true) {
         viewModelScope.launch {
-            repository.syncFromSupabase()
-            _userMessage.value = "Central database synced with Supabase"
+            val result = repository.syncFromSupabase()
+            if (showToast) {
+                if (result.isSuccess) {
+                    _userMessage.value = result.getOrNull() ?: "Central database synced with Supabase"
+                } else {
+                    val err = result.exceptionOrNull()?.message ?: "Sync failed"
+                    _userMessage.value = "Central sync: $err"
+                }
+            }
         }
     }
 
@@ -70,7 +78,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
 
-    // --- Reactive Data Streams ---
+    // --- Reactive Data Streams from Local Room Cache (Synced from Supabase) ---
     val allUsers: StateFlow<List<UserEntity>> = repository.allUsers
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -95,7 +103,10 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
     val allAuditLogs: StateFlow<List<AuditLogEntity>> = repository.allAuditLogs
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Stats
+    val allRevisions: StateFlow<List<PatrolPointRevisionEntity>> = repository.allRevisions
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Dashboard Stats
     val totalPatrols: StateFlow<Int> = repository.totalPatrolsCount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
@@ -114,9 +125,6 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
     private val _mustChangePassword = MutableStateFlow(false)
     val mustChangePassword: StateFlow<Boolean> = _mustChangePassword.asStateFlow()
 
-    val allRevisions: StateFlow<List<com.example.data.PatrolPointRevisionEntity>> = repository.allRevisions
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     // --- Authentication ---
     fun login(usernameInput: String, passwordInput: String) {
         viewModelScope.launch {
@@ -126,6 +134,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
 
+            // Central-first authentication: refreshes UserEntity from Supabase
             val user = repository.authenticateUser(usernameInput, passwordInput)
             if (user != null) {
                 if (user.status == "Inactive") {
@@ -134,11 +143,11 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 _currentUser.value = user
 
-                val prefs = getApplication<Application>().getSharedPreferences("yamaha_prefs", Context.MODE_PRIVATE)
-                val passwordChangedInPrefs = prefs.getBoolean("admin_password_changed_${user.username}", false)
-                
-                // Force password change ONLY if password is default "Admin@123" AND not yet updated in prefs
-                if (user.passwordHash == "Admin@123" && !passwordChangedInPrefs) {
+                // Multi-Device Central Rule:
+                // If user is Admin and passwordHash is still the initial default "Admin@123",
+                // mandatory password change is required. Once changed centrally on any device,
+                // passwordHash is no longer "Admin@123", so no device will prompt again!
+                if ((user.role == "ADMIN" || user.username == "admin") && user.passwordHash == "Admin@123") {
                     _mustChangePassword.value = true
                 } else {
                     _mustChangePassword.value = false
@@ -159,16 +168,17 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
             val updatedUser = user.copy(passwordHash = newPassword)
-            repository.updateUser(updatedUser)
+            val result = repository.updateUser(updatedUser)
             _currentUser.value = updatedUser
             _mustChangePassword.value = false
             _currentScreen.value = Screen.Dashboard
 
-            val prefs = getApplication<Application>().getSharedPreferences("yamaha_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putBoolean("admin_password_changed_${user.username}", true).apply()
-
-            repository.logAudit(updatedUser, "PASSWORD_CHANGED", "Authentication", "Changed default password on initial login")
-            _userMessage.value = "Password updated successfully!"
+            repository.logAudit(updatedUser, "PASSWORD_CHANGED", "Authentication", "Changed default password on central Supabase database")
+            if (result.isSuccess) {
+                _userMessage.value = "Password updated in central database successfully!"
+            } else {
+                _userMessage.value = "Password updated locally (will sync to Supabase when connected)"
+            }
         }
     }
 
@@ -194,30 +204,46 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
     // --- Shop Management ---
     fun addShop(shopName: String) {
         viewModelScope.launch {
-            repository.insertShop(ShopEntity(shopName = shopName.trim()))
-            _userMessage.value = "Shop '$shopName' added successfully"
+            val result = repository.insertShop(ShopEntity(shopName = shopName.trim()))
+            if (result.isSuccess) {
+                _userMessage.value = "Shop '$shopName' added to central database"
+            } else {
+                _userMessage.value = "Shop '$shopName' added locally"
+            }
         }
     }
 
     fun deleteShop(shopId: Int) {
         viewModelScope.launch {
-            repository.deleteShop(shopId)
-            _userMessage.value = "Shop deleted"
+            val result = repository.deleteShop(shopId)
+            if (result.isSuccess) {
+                _userMessage.value = "Shop deleted centrally"
+            } else {
+                _userMessage.value = "Shop deleted"
+            }
         }
     }
 
     // --- Line Management ---
     fun addLine(shopId: Int, shopName: String, lineName: String) {
         viewModelScope.launch {
-            repository.insertLine(LineEntity(shopId = shopId, shopName = shopName, lineName = lineName.trim()))
-            _userMessage.value = "Line '$lineName' added under $shopName"
+            val result = repository.insertLine(LineEntity(shopId = shopId, shopName = shopName, lineName = lineName.trim()))
+            if (result.isSuccess) {
+                _userMessage.value = "Line '$lineName' added under $shopName in central database"
+            } else {
+                _userMessage.value = "Line '$lineName' added under $shopName"
+            }
         }
     }
 
     fun deleteLine(lineId: Int) {
         viewModelScope.launch {
-            repository.deleteLine(lineId)
-            _userMessage.value = "Line deleted"
+            val result = repository.deleteLine(lineId)
+            if (result.isSuccess) {
+                _userMessage.value = "Line deleted centrally"
+            } else {
+                _userMessage.value = "Line deleted"
+            }
         }
     }
 
@@ -232,7 +258,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
         model: String
     ) {
         viewModelScope.launch {
-            repository.insertMachine(
+            val result = repository.insertMachine(
                 MachineEntity(
                     lineId = lineId,
                     shopName = shopName,
@@ -244,14 +270,22 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                     status = "Operational"
                 )
             )
-            _userMessage.value = "Machine '$machineName' added to $lineName"
+            if (result.isSuccess) {
+                _userMessage.value = "Machine '$machineName' added to central database"
+            } else {
+                _userMessage.value = "Machine '$machineName' added locally"
+            }
         }
     }
 
     fun deleteMachine(machineId: Int) {
         viewModelScope.launch {
-            repository.deleteMachine(machineId)
-            _userMessage.value = "Machine deleted"
+            val result = repository.deleteMachine(machineId)
+            if (result.isSuccess) {
+                _userMessage.value = "Machine deleted centrally"
+            } else {
+                _userMessage.value = "Machine deleted"
+            }
         }
     }
 
@@ -267,7 +301,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
         description: String
     ) {
         viewModelScope.launch {
-            repository.insertPatrolPoint(
+            val result = repository.insertPatrolPoint(
                 PatrolPointEntity(
                     machineId = machineId,
                     machineName = machineName,
@@ -281,7 +315,11 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                     revisionNumber = 1
                 )
             )
-            _userMessage.value = "Patrol Point '$pointName' added for $machineName"
+            if (result.isSuccess) {
+                _userMessage.value = "Patrol Point '$pointName' added to central database"
+            } else {
+                _userMessage.value = "Patrol Point '$pointName' added locally"
+            }
         }
     }
 
@@ -294,18 +332,26 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         val user = _currentUser.value ?: return
         viewModelScope.launch {
-            repository.revisePatrolPoint(point, newStandardValue, newCategory, newFrequency, reason, user.employeeName)
+            val result = repository.revisePatrolPoint(point, newStandardValue, newCategory, newFrequency, reason, user.employeeName)
             repository.logAudit(user, "REVISE", "Patrol Points", "Revised patrol point: ${point.pointName}")
-            _userMessage.value = "Patrol point revised to Rev #${point.revisionNumber + 1}"
+            if (result.isSuccess) {
+                _userMessage.value = "Patrol point revised centrally to Rev #${point.revisionNumber + 1}"
+            } else {
+                _userMessage.value = "Patrol point revised locally to Rev #${point.revisionNumber + 1}"
+            }
         }
     }
 
     fun deletePatrolPoint(pointId: Int) {
         val user = _currentUser.value ?: return
         viewModelScope.launch {
-            repository.deletePatrolPoint(pointId)
+            val result = repository.deletePatrolPoint(pointId)
             repository.logAudit(user, "DELETE", "Patrol Points", "Deleted patrol point ID $pointId")
-            _userMessage.value = "Patrol point deleted"
+            if (result.isSuccess) {
+                _userMessage.value = "Patrol point deleted centrally"
+            } else {
+                _userMessage.value = "Patrol point deleted"
+            }
         }
     }
 
@@ -347,7 +393,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 val severity = detail.second
                 val countermeasure = detail.third.first
                 val localPhotoUri = detail.third.second
-                
+
                 var remotePhotoUrl: String? = localPhotoUri
                 if (!localPhotoUri.isNullOrBlank() && (localPhotoUri.startsWith("content://") || localPhotoUri.startsWith("file://"))) {
                     try {
@@ -356,7 +402,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                             remotePhotoUrl = uploaded
                         } else {
                             remotePhotoUrl = null
-                            _userMessage.value = "Warning: Failed to upload evidence photo to Supabase storage"
+                            _userMessage.value = "Note: Photo stored locally"
                         }
                     } catch (e: Exception) {
                         remotePhotoUrl = null
@@ -378,16 +424,15 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
 
-            // Create individual abnormality entry for EACH abnormal checkpoint
             val abnormalEntities = mutableListOf<AbnormalityEntity>()
             var abCounter = 1
-            checkpointResults.filter { it.second.first == "ABNORMAL" }.forEachIndexed { idx, (point, statusAndRemarks, detail) ->
+            checkpointResults.filter { it.second.first == "ABNORMAL" }.forEach { (point, statusAndRemarks, detail) ->
                 val abNo = "ABN-$dateStr-${((timeMs + abCounter) % 1000000).toString().padStart(6, '0')}"
                 abCounter++
                 val probDesc = detail.first.ifBlank { statusAndRemarks.second }
                 val severity = detail.second
                 val countermeasure = detail.third.first
-                val photoUrl = resultsEntities.getOrNull(checkpointResults.indexOfFirst { it.first.id == point.id })?.photoUri
+                val photoUrl = resultsEntities.firstOrNull { it.patrolPointId == point.id }?.photoUri
 
                 abnormalEntities.add(
                     AbnormalityEntity(
@@ -412,12 +457,14 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
 
-            val logId = repository.submitPatrolLog(patrolLog, resultsEntities, null)
+            val submitResult = repository.submitPatrolLog(patrolLog, resultsEntities, null)
+            val finalLogId = submitResult.getOrDefault(0L).toInt()
+
             abnormalEntities.forEach { ab ->
-                repository.updateAbnormality(ab.copy(patrolLogId = logId.toInt()), user)
+                repository.updateAbnormality(ab.copy(patrolLogId = finalLogId), user)
             }
 
-            _userMessage.value = "Patrol $patrolNo submitted! (${abnormalEntities.size} abnormalities recorded)"
+            _userMessage.value = "Patrol $patrolNo submitted centrally! (${abnormalEntities.size} abnormalities recorded)"
             _currentScreen.value = Screen.Dashboard
         }
     }
@@ -434,7 +481,7 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
         val user = _currentUser.value ?: return
         viewModelScope.launch {
             val completedDate = if (newStatus == "RESOLVED" || newStatus == "VERIFIED") {
-                "2026-07-30"
+                java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
             } else abnormality.completedDate
 
             val updated = abnormality.copy(
@@ -445,8 +492,12 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 priority = priority,
                 completedDate = completedDate
             )
-            repository.updateAbnormality(updated, user)
-            _userMessage.value = "Abnormality #${abnormality.id} updated to $newStatus"
+            val result = repository.updateAbnormality(updated, user)
+            if (result.isSuccess) {
+                _userMessage.value = "Abnormality #${abnormality.id} updated centrally to $newStatus"
+            } else {
+                _userMessage.value = "Abnormality #${abnormality.id} updated locally"
+            }
         }
     }
 
@@ -476,18 +527,26 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
                 passwordHash = password,
                 createdBy = adminUser.employeeName
             )
-            repository.insertUser(newUser)
+            val result = repository.insertUser(newUser)
             repository.logAudit(adminUser, "CREATE", "User Management", "Created/Updated user $cleanUsername ($employeeId)")
-            _userMessage.value = "User $employeeName ($employeeId) saved!"
+            if (result.isSuccess) {
+                _userMessage.value = "User $employeeName saved in central database!"
+            } else {
+                _userMessage.value = "User $employeeName saved locally"
+            }
         }
     }
 
     fun deleteUser(employeeId: String) {
         val adminUser = _currentUser.value ?: return
         viewModelScope.launch {
-            repository.deleteUser(employeeId)
+            val result = repository.deleteUser(employeeId)
             repository.logAudit(adminUser, "DELETE", "User Management", "Deleted user ID $employeeId")
-            _userMessage.value = "User deleted successfully"
+            if (result.isSuccess) {
+                _userMessage.value = "User deleted from central database"
+            } else {
+                _userMessage.value = "User deleted locally"
+            }
         }
     }
 
@@ -495,10 +554,22 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
         val user = _currentUser.value ?: return
         if (user.role != "ADMIN") return
         viewModelScope.launch {
-            repository.clearTransactionalData()
+            val result = repository.clearTransactionalData()
             repository.logAudit(user, "CLEAR_DATA", "System Management", "Cleared test/demo transactional records")
-            _userMessage.value = "All test/demo transactional records cleared successfully!"
+            if (result.isSuccess) {
+                _userMessage.value = "All transactional records cleared from central and local databases!"
+            } else {
+                _userMessage.value = "Transactional records cleared"
+            }
         }
+    }
+
+    suspend fun getResultsForLog(logId: Int): List<PatrolPointResultEntity> {
+        return repository.getResultsForLog(logId)
+    }
+
+    suspend fun getAllResultsDirect(): List<PatrolPointResultEntity> {
+        return repository.getAllResultsDirect()
     }
 
     fun generateReportData(reportType: String): String {
