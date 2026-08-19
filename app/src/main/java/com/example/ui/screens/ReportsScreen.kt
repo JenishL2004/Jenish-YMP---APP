@@ -283,34 +283,46 @@ private fun printPatrolPdf(
                     yPos += 10f
 
                     // Section 3: Photo Evidence
-                    val pointWithPhoto = results.firstOrNull { !it.photoUri.isNullOrBlank() }
-                    val photoUriToLoad = pointWithPhoto?.photoUri ?: associatedAbnormality?.photoUri
+                    val photoItems = mutableListOf<Pair<String, String>>()
+                    results.forEach { res ->
+                        if (!res.photoUri.isNullOrBlank()) {
+                            photoItems.add("Point: ${res.checkpointName} (${res.status})" to res.photoUri!!)
+                        }
+                    }
+                    if (associatedAbnormality != null && !associatedAbnormality.photoUri.isNullOrBlank()) {
+                        if (photoItems.none { it.second == associatedAbnormality.photoUri }) {
+                            photoItems.add("Abnormality: ${associatedAbnormality.problemDescription.take(28)}" to associatedAbnormality.photoUri!!)
+                        }
+                    }
 
                     paint.color = android.graphics.Color.parseColor("#003366")
                     paint.textSize = 11f
                     paint.isFakeBoldText = true
-                    canvas.drawText("3. INSPECTION PHOTO EVIDENCE", 36f, yPos, paint)
+                    canvas.drawText("3. INSPECTION PHOTO EVIDENCE (${photoItems.size} Photos Attached)", 36f, yPos, paint)
                     yPos += 14f
 
-                    if (!photoUriToLoad.isNullOrBlank()) {
-                        val bitmap = loadBitmapSafely(context, photoUriToLoad)
-                        if (bitmap != null) {
-                            val destRect = RectF(36f, yPos, 196f, yPos + 100f)
-                            canvas.drawBitmap(bitmap, null, destRect, null)
+                    if (photoItems.isNotEmpty()) {
+                        var photoX = 36f
+                        photoItems.take(3).forEachIndexed { idx, item ->
+                            val (caption, uri) = item
+                            val bitmap = loadBitmapSafely(context, uri)
+                            if (bitmap != null) {
+                                val destRect = RectF(photoX, yPos, photoX + 155f, yPos + 85f)
+                                canvas.drawBitmap(bitmap, null, destRect, null)
 
-                            paint.color = android.graphics.Color.DKGRAY
-                            paint.textSize = 8f
-                            paint.isFakeBoldText = false
-                            val caption = if (pointWithPhoto != null) "Point: ${pointWithPhoto.checkpointName} (${pointWithPhoto.status})" else "Abnormality Evidence"
-                            canvas.drawText(caption, 36f, yPos + 110f, paint)
-                            yPos += 122f
-                        } else {
-                            paint.color = android.graphics.Color.GRAY
-                            paint.textSize = 9f
-                            paint.isFakeBoldText = false
-                            canvas.drawText("[Photo attached: ${photoUriToLoad.take(50)}...]", 36f, yPos, paint)
-                            yPos += 16f
+                                paint.color = android.graphics.Color.DKGRAY
+                                paint.textSize = 7.5f
+                                paint.isFakeBoldText = false
+                                canvas.drawText(caption.take(28), photoX, yPos + 94f, paint)
+                            } else {
+                                paint.color = android.graphics.Color.GRAY
+                                paint.textSize = 8f
+                                paint.isFakeBoldText = false
+                                canvas.drawText("[Photo ${idx + 1}: ${caption.take(20)}]", photoX, yPos + 40f, paint)
+                            }
+                            photoX += 175f
                         }
+                        yPos += 105f
                     } else {
                         paint.color = android.graphics.Color.DKGRAY
                         paint.textSize = 9f
