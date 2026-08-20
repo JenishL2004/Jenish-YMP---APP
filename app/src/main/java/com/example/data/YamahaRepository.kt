@@ -129,26 +129,45 @@ class YamahaRepository(private val dao: YamahaDao) {
             // 7. Sync Patrol Logs
             val remoteLogs = supabaseService.fetchPatrolLogs()
             if (remoteLogs != null) {
-                if (remoteLogs.isNotEmpty()) {
-                    remoteLogs.forEach { dao.insertPatrolLog(it) }
-                    syncedCount += remoteLogs.size
+                val remoteLogIds = remoteLogs.map { it.id }.toSet()
+                val localLogs = dao.getAllPatrolLogsDirect()
+                localLogs.forEach { local ->
+                    if (!remoteLogIds.contains(local.id)) {
+                        dao.deletePatrolLog(local.id)
+                    }
                 }
+                remoteLogs.forEach { dao.insertPatrolLog(it) }
+                syncedCount += remoteLogs.size
             }
 
             // 8. Sync Patrol Point Results
             val remoteResults = supabaseService.fetchPatrolPointResults()
-            if (remoteResults != null && remoteResults.isNotEmpty()) {
-                dao.insertPatrolPointResults(remoteResults)
+            if (remoteResults != null) {
+                val remoteResultIds = remoteResults.map { it.id }.toSet()
+                val localResults = dao.getAllResultsDirect()
+                localResults.forEach { local ->
+                    if (!remoteResultIds.contains(local.id)) {
+                        dao.deletePatrolPointResult(local.id)
+                    }
+                }
+                if (remoteResults.isNotEmpty()) {
+                    dao.insertPatrolPointResults(remoteResults)
+                }
                 syncedCount += remoteResults.size
             }
 
             // 9. Sync Abnormalities
             val remoteAbnormalities = supabaseService.fetchAbnormalities()
             if (remoteAbnormalities != null) {
-                if (remoteAbnormalities.isNotEmpty()) {
-                    remoteAbnormalities.forEach { dao.insertAbnormality(it) }
-                    syncedCount += remoteAbnormalities.size
+                val remoteAbIds = remoteAbnormalities.map { it.id }.toSet()
+                val localAbs = dao.getAllAbnormalitiesDirect()
+                localAbs.forEach { local ->
+                    if (!remoteAbIds.contains(local.id)) {
+                        dao.deleteAbnormality(local.id)
+                    }
                 }
+                remoteAbnormalities.forEach { dao.insertAbnormality(it) }
+                syncedCount += remoteAbnormalities.size
             }
 
             // 10. Sync Audit Logs

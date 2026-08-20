@@ -285,49 +285,57 @@ private fun printPatrolPdf(
                     // Section 3: Photo Evidence
                     val photoItems = mutableListOf<Pair<String, String>>()
                     results.forEach { res ->
-                        if (!res.photoUri.isNullOrBlank()) {
-                            photoItems.add("Point: ${res.checkpointName} (${res.status})" to res.photoUri!!)
+                        val uri = res.photoUri?.trim()
+                        if (!uri.isNullOrBlank() && uri != "null" && (uri.startsWith("http://") || uri.startsWith("https://") || uri.startsWith("content://") || uri.startsWith("file://"))) {
+                            photoItems.add("Point: ${res.checkpointName} (${res.status})" to uri)
                         }
                     }
-                    if (associatedAbnormality != null && !associatedAbnormality.photoUri.isNullOrBlank()) {
-                        if (photoItems.none { it.second == associatedAbnormality.photoUri }) {
-                            photoItems.add("Abnormality: ${associatedAbnormality.problemDescription.take(28)}" to associatedAbnormality.photoUri!!)
+                    if (associatedAbnormality != null) {
+                        val abUri = associatedAbnormality.photoUri?.trim()
+                        if (!abUri.isNullOrBlank() && abUri != "null" && (abUri.startsWith("http://") || abUri.startsWith("https://") || abUri.startsWith("content://") || abUri.startsWith("file://"))) {
+                            if (photoItems.none { it.second == abUri }) {
+                                photoItems.add("Abnormality: ${associatedAbnormality.problemDescription.take(28)}" to abUri)
+                            }
+                        }
+                    }
+
+                    // Load actual valid bitmaps
+                    val loadedBitmaps = mutableListOf<Pair<String, Bitmap>>()
+                    photoItems.forEach { (caption, uri) ->
+                        val bmp = loadBitmapSafely(context, uri)
+                        if (bmp != null) {
+                            loadedBitmaps.add(caption to bmp)
                         }
                     }
 
                     paint.color = android.graphics.Color.parseColor("#003366")
                     paint.textSize = 11f
                     paint.isFakeBoldText = true
-                    canvas.drawText("3. INSPECTION PHOTO EVIDENCE (${photoItems.size} Photos Attached)", 36f, yPos, paint)
-                    yPos += 14f
 
-                    if (photoItems.isNotEmpty()) {
+                    if (loadedBitmaps.isNotEmpty()) {
+                        canvas.drawText("3. INSPECTION PHOTO EVIDENCE (${loadedBitmaps.size} Photos Attached)", 36f, yPos, paint)
+                        yPos += 14f
+
                         var photoX = 36f
-                        photoItems.take(3).forEachIndexed { idx, item ->
-                            val (caption, uri) = item
-                            val bitmap = loadBitmapSafely(context, uri)
-                            if (bitmap != null) {
-                                val destRect = RectF(photoX, yPos, photoX + 155f, yPos + 85f)
-                                canvas.drawBitmap(bitmap, null, destRect, null)
+                        loadedBitmaps.take(3).forEach { (caption, bitmap) ->
+                            val destRect = RectF(photoX, yPos, photoX + 155f, yPos + 85f)
+                            canvas.drawBitmap(bitmap, null, destRect, null)
 
-                                paint.color = android.graphics.Color.DKGRAY
-                                paint.textSize = 7.5f
-                                paint.isFakeBoldText = false
-                                canvas.drawText(caption.take(28), photoX, yPos + 94f, paint)
-                            } else {
-                                paint.color = android.graphics.Color.GRAY
-                                paint.textSize = 8f
-                                paint.isFakeBoldText = false
-                                canvas.drawText("[Photo ${idx + 1}: ${caption.take(20)}]", photoX, yPos + 40f, paint)
-                            }
+                            paint.color = android.graphics.Color.DKGRAY
+                            paint.textSize = 7.5f
+                            paint.isFakeBoldText = false
+                            canvas.drawText(caption.take(28), photoX, yPos + 94f, paint)
                             photoX += 175f
                         }
                         yPos += 105f
                     } else {
+                        canvas.drawText("3. INSPECTION PHOTO EVIDENCE", 36f, yPos, paint)
+                        yPos += 14f
+
                         paint.color = android.graphics.Color.DKGRAY
                         paint.textSize = 9f
                         paint.isFakeBoldText = false
-                        canvas.drawText("No photographic abnormality recorded for this patrol inspection.", 36f, yPos, paint)
+                        canvas.drawText("No evidence photo recorded.", 36f, yPos, paint)
                         yPos += 16f
                     }
 
@@ -802,17 +810,18 @@ fun ReportsScreen(
                                         listOf(
                                             log.patrolNumber, log.shopName, log.lineName, log.machineName,
                                             log.employeeName, log.shift, dateStr, log.overallStatus,
-                                            "General Inspection", "N/A", "N/A", log.overallStatus, log.notes, ""
+                                            "General Inspection", "N/A", "N/A", log.overallStatus, log.notes, "No evidence photo recorded."
                                         )
                                     )
                                 } else {
                                     logResults.forEach { res ->
+                                        val photoVal = if (!res.photoUri.isNullOrBlank() && res.photoUri != "null") res.photoUri!! else "No evidence photo recorded."
                                         rows.add(
                                             listOf(
                                                 log.patrolNumber, log.shopName, log.lineName, log.machineName,
                                                 log.employeeName, log.shift, dateStr, log.overallStatus,
                                                 res.checkpointName, res.category, res.standardValue, res.status,
-                                                res.remarks, res.photoUri ?: ""
+                                                res.remarks, photoVal
                                             )
                                         )
                                     }

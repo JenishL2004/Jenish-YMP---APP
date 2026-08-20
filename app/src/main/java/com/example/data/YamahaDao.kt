@@ -122,11 +122,17 @@ interface YamahaDao {
     @Query("SELECT * FROM patrol_logs")
     suspend fun getAllPatrolLogsDirect(): List<PatrolLogEntity>
 
+    @Query("DELETE FROM patrol_logs WHERE id = :logId")
+    suspend fun deletePatrolLog(logId: Int)
+
     @Query("SELECT * FROM patrol_point_results WHERE patrolLogId = :logId")
     suspend fun getResultsForLog(logId: Int): List<PatrolPointResultEntity>
 
     @Query("SELECT * FROM patrol_point_results")
     suspend fun getAllResultsDirect(): List<PatrolPointResultEntity>
+
+    @Query("DELETE FROM patrol_point_results WHERE id = :resultId")
+    suspend fun deletePatrolPointResult(resultId: Int)
 
     // --- ABNORMALITY MANAGEMENT ---
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -137,6 +143,9 @@ interface YamahaDao {
 
     @Query("SELECT * FROM abnormalities")
     suspend fun getAllAbnormalitiesDirect(): List<AbnormalityEntity>
+
+    @Query("DELETE FROM abnormalities WHERE id = :abnormalityId")
+    suspend fun deleteAbnormality(abnormalityId: Int)
 
     @Query("SELECT * FROM abnormalities WHERE status = :status ORDER BY priority DESC, timestamp DESC")
     fun getAbnormalitiesByStatus(status: String): Flow<List<AbnormalityEntity>>

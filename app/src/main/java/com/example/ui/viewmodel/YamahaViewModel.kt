@@ -44,6 +44,13 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
         repository = YamahaRepository(database.yamahaDao())
         viewModelScope.launch {
             repository.syncFromSupabase()
+            // Multi-device central sync loop: periodically pull latest state from Supabase
+            while (true) {
+                kotlinx.coroutines.delay(10000)
+                if (_currentUser.value != null) {
+                    repository.syncFromSupabase()
+                }
+            }
         }
     }
 
@@ -195,6 +202,11 @@ class YamahaViewModel(application: Application) : AndroidViewModel(application) 
 
     fun navigateTo(screen: Screen) {
         _currentScreen.value = screen
+        if (screen != Screen.Login) {
+            viewModelScope.launch {
+                repository.syncFromSupabase()
+            }
+        }
     }
 
     fun clearUserMessage() {

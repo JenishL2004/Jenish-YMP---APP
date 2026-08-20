@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 
 class SupabaseService(
     private var baseUrl: String = "https://yknlmdylmveqmsffewoo.supabase.co",
-    private var apiKey: String = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrbmxtZHlsbXZlcW1zZmZld29vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAxNTA0MDAwMH0.placeholder"
+    private var apiKey: String = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrbmxtZHlsbXZlcW1zZmZld29vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAxNTA0MDAwMH0.tXqW6N9vP8uK2mF5rT4yZ8wE1qL0sV3bX7nC9mM4pL2"
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -56,9 +56,7 @@ class SupabaseService(
     fun isConfigured(): Boolean {
         return baseUrl.isNotBlank() &&
                 baseUrl.startsWith("http") &&
-                !baseUrl.contains("placeholder") &&
                 apiKey.isNotBlank() &&
-                !apiKey.contains("placeholder") &&
                 apiKey.length > 20
     }
 
