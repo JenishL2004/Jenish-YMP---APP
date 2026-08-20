@@ -99,6 +99,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+import android.content.Intent
+import java.io.FileOutputStream
+
 private fun saveCsvToDownloads(context: Context, fileName: String, content: String): Boolean {
     return try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -150,6 +153,203 @@ private fun loadBitmapSafely(context: Context, uriString: String?): Bitmap? {
     }
 }
 
+private fun buildPatrolPdfDocument(
+    context: Context,
+    log: PatrolLogEntity,
+    results: List<PatrolPointResultEntity>,
+    associatedAbnormality: AbnormalityEntity?
+): PdfDocument {
+    val pdfDocument = PdfDocument()
+    val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4
+    val page = pdfDocument.startPage(pageInfo)
+    val canvas = page.canvas
+    val paint = Paint()
+
+    // Header
+    paint.color = android.graphics.Color.parseColor("#CC0000") // Yamaha Red
+    paint.textSize = 16f
+    paint.isFakeBoldText = true
+    canvas.drawText("YAMAHA MOTOR INDIA - WELDING PATROL REPORT", 36f, 44f, paint)
+
+    paint.color = android.graphics.Color.parseColor("#003366") // Yamaha Blue
+    paint.textSize = 10f
+    paint.isFakeBoldText = true
+    canvas.drawText("OFFICIAL QUALITY & MAINTENANCE RECORD | DOC: YMH-WPR-${log.id}-2026", 36f, 58f, paint)
+
+    paint.color = android.graphics.Color.DKGRAY
+    paint.strokeWidth = 1.5f
+    canvas.drawLine(36f, 66f, 559f, 66f, paint)
+
+    var yPos = 84f
+
+    // Section 1: Patrol Metadata
+    paint.color = android.graphics.Color.parseColor("#003366")
+    paint.textSize = 11f
+    paint.isFakeBoldText = true
+    canvas.drawText("1. PATROL & EQUIPMENT DETAILS", 36f, yPos, paint)
+    yPos += 14f
+
+    paint.color = android.graphics.Color.BLACK
+    paint.textSize = 9.5f
+    paint.isFakeBoldText = false
+    val dateFormatted = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(log.timestamp))
+
+    canvas.drawText("Patrol Number: ${log.patrolNumber}", 36f, yPos, paint)
+    canvas.drawText("Date & Time: $dateFormatted", 300f, yPos, paint)
+    yPos += 13f
+
+    canvas.drawText("Shop / Line: ${log.shopName} / ${log.lineName}", 36f, yPos, paint)
+    canvas.drawText("Shift: ${log.shift}", 300f, yPos, paint)
+    yPos += 13f
+
+    canvas.drawText("Machine: ${log.machineName}", 36f, yPos, paint)
+    canvas.drawText("Inspector: ${log.employeeName} (${log.employeeId})", 300f, yPos, paint)
+    yPos += 13f
+
+    val statusColor = if (log.overallStatus == "NORMAL") android.graphics.Color.parseColor("#1B5E20") else android.graphics.Color.parseColor("#B71C1C")
+    paint.color = statusColor
+    paint.isFakeBoldText = true
+    canvas.drawText("Overall Status: ${log.overallStatus}", 36f, yPos, paint)
+    paint.color = android.graphics.Color.BLACK
+    paint.isFakeBoldText = false
+    canvas.drawText("Notes: ${log.notes.take(40)}", 300f, yPos, paint)
+    yPos += 20f
+
+    // Section 2: Checkpoint Results Table
+    paint.color = android.graphics.Color.parseColor("#003366")
+    paint.textSize = 11f
+    paint.isFakeBoldText = true
+    canvas.drawText("2. CHECKPOINT RESULTS (${results.size} Points Inspected)", 36f, yPos, paint)
+    yPos += 14f
+
+    // Table Header
+    paint.color = android.graphics.Color.LTGRAY
+    canvas.drawRect(36f, yPos - 10f, 559f, yPos + 4f, paint)
+    paint.color = android.graphics.Color.BLACK
+    paint.textSize = 8.5f
+    paint.isFakeBoldText = true
+    canvas.drawText("Point Name", 40f, yPos, paint)
+    canvas.drawText("Category", 180f, yPos, paint)
+    canvas.drawText("Standard Value", 260f, yPos, paint)
+    canvas.drawText("Status", 420f, yPos, paint)
+    canvas.drawText("Remarks", 480f, yPos, paint)
+    yPos += 14f
+
+    // Table Rows
+    paint.isFakeBoldText = false
+    results.take(12).forEach { res ->
+        paint.color = android.graphics.Color.BLACK
+        canvas.drawText(res.checkpointName.take(22), 40f, yPos, paint)
+        canvas.drawText(res.category.take(14), 180f, yPos, paint)
+        canvas.drawText(res.standardValue.take(22), 260f, yPos, paint)
+
+        paint.color = if (res.status == "NORMAL") android.graphics.Color.parseColor("#1B5E20") else android.graphics.Color.parseColor("#B71C1C")
+        paint.isFakeBoldText = true
+        canvas.drawText(res.status, 420f, yPos, paint)
+        paint.isFakeBoldText = false
+
+        paint.color = android.graphics.Color.DKGRAY
+        canvas.drawText(res.remarks.take(16), 480f, yPos, paint)
+        yPos += 12f
+    }
+
+    yPos += 10f
+
+    // Section 3: Photo Evidence
+    val photoItems = mutableListOf<Pair<String, String>>()
+    results.forEach { res ->
+        val uri = res.photoUri?.trim()
+        if (!uri.isNullOrBlank() && uri != "null" && (uri.startsWith("http://") || uri.startsWith("https://") || uri.startsWith("content://") || uri.startsWith("file://"))) {
+            photoItems.add("Point: ${res.checkpointName} (${res.status})" to uri)
+        }
+    }
+    if (associatedAbnormality != null) {
+        val abUri = associatedAbnormality.photoUri?.trim()
+        if (!abUri.isNullOrBlank() && abUri != "null" && (abUri.startsWith("http://") || abUri.startsWith("https://") || abUri.startsWith("content://") || abUri.startsWith("file://"))) {
+            if (photoItems.none { it.second == abUri }) {
+                photoItems.add("Abnormality: ${associatedAbnormality.problemDescription.take(28)}" to abUri)
+            }
+        }
+    }
+
+    // Load actual valid bitmaps
+    val loadedBitmaps = mutableListOf<Pair<String, Bitmap>>()
+    photoItems.forEach { (caption, uri) ->
+        val bmp = loadBitmapSafely(context, uri)
+        if (bmp != null) {
+            loadedBitmaps.add(caption to bmp)
+        }
+    }
+
+    paint.color = android.graphics.Color.parseColor("#003366")
+    paint.textSize = 11f
+    paint.isFakeBoldText = true
+
+    if (loadedBitmaps.isNotEmpty()) {
+        canvas.drawText("3. INSPECTION PHOTO EVIDENCE (${loadedBitmaps.size} Photos Attached)", 36f, yPos, paint)
+        yPos += 14f
+
+        var photoX = 36f
+        loadedBitmaps.take(3).forEach { (caption, bitmap) ->
+            val destRect = RectF(photoX, yPos, photoX + 155f, yPos + 85f)
+            canvas.drawBitmap(bitmap, null, destRect, null)
+
+            paint.color = android.graphics.Color.DKGRAY
+            paint.textSize = 7.5f
+            paint.isFakeBoldText = false
+            canvas.drawText(caption.take(28), photoX, yPos + 94f, paint)
+            photoX += 175f
+        }
+        yPos += 105f
+    } else {
+        canvas.drawText("3. INSPECTION PHOTO EVIDENCE", 36f, yPos, paint)
+        yPos += 14f
+
+        paint.color = android.graphics.Color.DKGRAY
+        paint.textSize = 9f
+        paint.isFakeBoldText = false
+        canvas.drawText("No evidence photo recorded.", 36f, yPos, paint)
+        yPos += 16f
+    }
+
+    // Section 4: Abnormality / RCA Summary (if exists)
+    if (associatedAbnormality != null) {
+        yPos += 6f
+        paint.color = android.graphics.Color.parseColor("#B71C1C")
+        paint.textSize = 11f
+        paint.isFakeBoldText = true
+        canvas.drawText("4. ABNORMALITY & COUNTERMEASURE RECORD", 36f, yPos, paint)
+        yPos += 14f
+
+        paint.color = android.graphics.Color.BLACK
+        paint.textSize = 8.5f
+        paint.isFakeBoldText = false
+        canvas.drawText("Problem: ${associatedAbnormality.problemDescription}", 36f, yPos, paint)
+        yPos += 11f
+        canvas.drawText("Root Cause: ${associatedAbnormality.rootCause.ifBlank { "Under RCA investigation" }}", 36f, yPos, paint)
+        yPos += 11f
+        canvas.drawText("Corrective Action: ${associatedAbnormality.correctiveAction.ifBlank { "Action pending" }} | Resp: ${associatedAbnormality.responsiblePerson}", 36f, yPos, paint)
+        yPos += 16f
+    }
+
+    // Section 5: Signatures
+    val signY = 780f
+    paint.color = android.graphics.Color.BLACK
+    paint.textSize = 9f
+    paint.isFakeBoldText = true
+    canvas.drawText("Inspector: ${log.employeeName}", 36f, signY, paint)
+    paint.isFakeBoldText = false
+    canvas.drawText("Signature: [ VERIFIED ON-SITE ]", 36f, signY + 12f, paint)
+
+    paint.isFakeBoldText = true
+    canvas.drawText("Quality Supervisor / Admin", 340f, signY, paint)
+    paint.isFakeBoldText = false
+    canvas.drawText("Approval: [ SIGNED & APPROVED ]", 340f, signY + 12f, paint)
+
+    pdfDocument.finishPage(page)
+    return pdfDocument
+}
+
 private fun printPatrolPdf(
     context: Context,
     log: PatrolLogEntity,
@@ -186,198 +386,10 @@ private fun printPatrolPdf(
                     cancellationSignal: CancellationSignal?,
                     callback: WriteResultCallback?
                 ) {
-                    val pdfDocument = PdfDocument()
-                    val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4
-                    val page = pdfDocument.startPage(pageInfo)
-                    val canvas = page.canvas
-                    val paint = Paint()
-
-                    // Header
-                    paint.color = android.graphics.Color.parseColor("#CC0000") // Yamaha Red
-                    paint.textSize = 16f
-                    paint.isFakeBoldText = true
-                    canvas.drawText("YAMAHA MOTOR INDIA - WELDING PATROL REPORT", 36f, 44f, paint)
-
-                    paint.color = android.graphics.Color.parseColor("#003366") // Yamaha Blue
-                    paint.textSize = 10f
-                    paint.isFakeBoldText = true
-                    canvas.drawText("OFFICIAL QUALITY & MAINTENANCE RECORD | DOC: YMH-WPR-${log.id}-2026", 36f, 58f, paint)
-
-                    paint.color = android.graphics.Color.DKGRAY
-                    paint.strokeWidth = 1.5f
-                    canvas.drawLine(36f, 66f, 559f, 66f, paint)
-
-                    var yPos = 84f
-
-                    // Section 1: Patrol Metadata
-                    paint.color = android.graphics.Color.parseColor("#003366")
-                    paint.textSize = 11f
-                    paint.isFakeBoldText = true
-                    canvas.drawText("1. PATROL & EQUIPMENT DETAILS", 36f, yPos, paint)
-                    yPos += 14f
-
-                    paint.color = android.graphics.Color.BLACK
-                    paint.textSize = 9.5f
-                    paint.isFakeBoldText = false
-                    val dateFormatted = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(log.timestamp))
-
-                    canvas.drawText("Patrol Number: ${log.patrolNumber}", 36f, yPos, paint)
-                    canvas.drawText("Date & Time: $dateFormatted", 300f, yPos, paint)
-                    yPos += 13f
-
-                    canvas.drawText("Shop / Line: ${log.shopName} / ${log.lineName}", 36f, yPos, paint)
-                    canvas.drawText("Shift: ${log.shift}", 300f, yPos, paint)
-                    yPos += 13f
-
-                    canvas.drawText("Machine: ${log.machineName}", 36f, yPos, paint)
-                    canvas.drawText("Inspector: ${log.employeeName} (${log.employeeId})", 300f, yPos, paint)
-                    yPos += 13f
-
-                    val statusColor = if (log.overallStatus == "NORMAL") android.graphics.Color.parseColor("#1B5E20") else android.graphics.Color.parseColor("#B71C1C")
-                    paint.color = statusColor
-                    paint.isFakeBoldText = true
-                    canvas.drawText("Overall Status: ${log.overallStatus}", 36f, yPos, paint)
-                    paint.color = android.graphics.Color.BLACK
-                    paint.isFakeBoldText = false
-                    canvas.drawText("Notes: ${log.notes.take(40)}", 300f, yPos, paint)
-                    yPos += 20f
-
-                    // Section 2: Checkpoint Results Table
-                    paint.color = android.graphics.Color.parseColor("#003366")
-                    paint.textSize = 11f
-                    paint.isFakeBoldText = true
-                    canvas.drawText("2. CHECKPOINT RESULTS (${results.size} Points Inspected)", 36f, yPos, paint)
-                    yPos += 14f
-
-                    // Table Header
-                    paint.color = android.graphics.Color.LTGRAY
-                    canvas.drawRect(36f, yPos - 10f, 559f, yPos + 4f, paint)
-                    paint.color = android.graphics.Color.BLACK
-                    paint.textSize = 8.5f
-                    paint.isFakeBoldText = true
-                    canvas.drawText("Point Name", 40f, yPos, paint)
-                    canvas.drawText("Category", 180f, yPos, paint)
-                    canvas.drawText("Standard Value", 260f, yPos, paint)
-                    canvas.drawText("Status", 420f, yPos, paint)
-                    canvas.drawText("Remarks", 480f, yPos, paint)
-                    yPos += 14f
-
-                    // Table Rows
-                    paint.isFakeBoldText = false
-                    results.take(12).forEach { res ->
-                        paint.color = android.graphics.Color.BLACK
-                        canvas.drawText(res.checkpointName.take(22), 40f, yPos, paint)
-                        canvas.drawText(res.category.take(14), 180f, yPos, paint)
-                        canvas.drawText(res.standardValue.take(22), 260f, yPos, paint)
-
-                        paint.color = if (res.status == "NORMAL") android.graphics.Color.parseColor("#1B5E20") else android.graphics.Color.parseColor("#B71C1C")
-                        paint.isFakeBoldText = true
-                        canvas.drawText(res.status, 420f, yPos, paint)
-                        paint.isFakeBoldText = false
-
-                        paint.color = android.graphics.Color.DKGRAY
-                        canvas.drawText(res.remarks.take(16), 480f, yPos, paint)
-                        yPos += 12f
-                    }
-
-                    yPos += 10f
-
-                    // Section 3: Photo Evidence
-                    val photoItems = mutableListOf<Pair<String, String>>()
-                    results.forEach { res ->
-                        val uri = res.photoUri?.trim()
-                        if (!uri.isNullOrBlank() && uri != "null" && (uri.startsWith("http://") || uri.startsWith("https://") || uri.startsWith("content://") || uri.startsWith("file://"))) {
-                            photoItems.add("Point: ${res.checkpointName} (${res.status})" to uri)
-                        }
-                    }
-                    if (associatedAbnormality != null) {
-                        val abUri = associatedAbnormality.photoUri?.trim()
-                        if (!abUri.isNullOrBlank() && abUri != "null" && (abUri.startsWith("http://") || abUri.startsWith("https://") || abUri.startsWith("content://") || abUri.startsWith("file://"))) {
-                            if (photoItems.none { it.second == abUri }) {
-                                photoItems.add("Abnormality: ${associatedAbnormality.problemDescription.take(28)}" to abUri)
-                            }
-                        }
-                    }
-
-                    // Load actual valid bitmaps
-                    val loadedBitmaps = mutableListOf<Pair<String, Bitmap>>()
-                    photoItems.forEach { (caption, uri) ->
-                        val bmp = loadBitmapSafely(context, uri)
-                        if (bmp != null) {
-                            loadedBitmaps.add(caption to bmp)
-                        }
-                    }
-
-                    paint.color = android.graphics.Color.parseColor("#003366")
-                    paint.textSize = 11f
-                    paint.isFakeBoldText = true
-
-                    if (loadedBitmaps.isNotEmpty()) {
-                        canvas.drawText("3. INSPECTION PHOTO EVIDENCE (${loadedBitmaps.size} Photos Attached)", 36f, yPos, paint)
-                        yPos += 14f
-
-                        var photoX = 36f
-                        loadedBitmaps.take(3).forEach { (caption, bitmap) ->
-                            val destRect = RectF(photoX, yPos, photoX + 155f, yPos + 85f)
-                            canvas.drawBitmap(bitmap, null, destRect, null)
-
-                            paint.color = android.graphics.Color.DKGRAY
-                            paint.textSize = 7.5f
-                            paint.isFakeBoldText = false
-                            canvas.drawText(caption.take(28), photoX, yPos + 94f, paint)
-                            photoX += 175f
-                        }
-                        yPos += 105f
-                    } else {
-                        canvas.drawText("3. INSPECTION PHOTO EVIDENCE", 36f, yPos, paint)
-                        yPos += 14f
-
-                        paint.color = android.graphics.Color.DKGRAY
-                        paint.textSize = 9f
-                        paint.isFakeBoldText = false
-                        canvas.drawText("No evidence photo recorded.", 36f, yPos, paint)
-                        yPos += 16f
-                    }
-
-                    // Section 4: Abnormality / RCA Summary (if exists)
-                    if (associatedAbnormality != null) {
-                        yPos += 6f
-                        paint.color = android.graphics.Color.parseColor("#B71C1C")
-                        paint.textSize = 11f
-                        paint.isFakeBoldText = true
-                        canvas.drawText("4. ABNORMALITY & COUNTERMEASURE RECORD", 36f, yPos, paint)
-                        yPos += 14f
-
-                        paint.color = android.graphics.Color.BLACK
-                        paint.textSize = 8.5f
-                        paint.isFakeBoldText = false
-                        canvas.drawText("Problem: ${associatedAbnormality.problemDescription}", 36f, yPos, paint)
-                        yPos += 11f
-                        canvas.drawText("Root Cause: ${associatedAbnormality.rootCause.ifBlank { "Under RCA investigation" }}", 36f, yPos, paint)
-                        yPos += 11f
-                        canvas.drawText("Corrective Action: ${associatedAbnormality.correctiveAction.ifBlank { "Action pending" }} | Resp: ${associatedAbnormality.responsiblePerson}", 36f, yPos, paint)
-                        yPos += 16f
-                    }
-
-                    // Section 5: Signatures
-                    val signY = 780f
-                    paint.color = android.graphics.Color.BLACK
-                    paint.textSize = 9f
-                    paint.isFakeBoldText = true
-                    canvas.drawText("Inspector: ${log.employeeName}", 36f, signY, paint)
-                    paint.isFakeBoldText = false
-                    canvas.drawText("Signature: [ VERIFIED ON-SITE ]", 36f, signY + 12f, paint)
-
-                    paint.isFakeBoldText = true
-                    canvas.drawText("Quality Supervisor / Admin", 340f, signY, paint)
-                    paint.isFakeBoldText = false
-                    canvas.drawText("Approval: [ SIGNED & APPROVED ]", 340f, signY + 12f, paint)
-
-                    pdfDocument.finishPage(page)
-
+                    val pdfDocument = buildPatrolPdfDocument(context, log, results, associatedAbnormality)
                     try {
                         destination?.let { pfd ->
-                            java.io.FileOutputStream(pfd.fileDescriptor).use { os ->
+                            FileOutputStream(pfd.fileDescriptor).use { os ->
                                 pdfDocument.writeTo(os)
                             }
                         }
@@ -391,6 +403,61 @@ private fun printPatrolPdf(
             },
             null
         )
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
+private fun exportPdfToDownloads(
+    context: Context,
+    log: PatrolLogEntity,
+    results: List<PatrolPointResultEntity>,
+    associatedAbnormality: AbnormalityEntity?
+): Uri? {
+    return try {
+        val pdfDocument = buildPatrolPdfDocument(context, log, results, associatedAbnormality)
+        val fileName = "Yamaha_Patrol_${log.patrolNumber}.pdf"
+        val mimeType = "application/pdf"
+        val uri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val insertedUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (insertedUri != null) {
+                resolver.openOutputStream(insertedUri)?.use { os ->
+                    pdfDocument.writeTo(os)
+                    os.flush()
+                }
+                insertedUri
+            } else null
+        } else {
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val file = File(downloadsDir, fileName)
+            FileOutputStream(file).use { os ->
+                pdfDocument.writeTo(os)
+                os.flush()
+            }
+            Uri.fromFile(file)
+        }
+        pdfDocument.close()
+        uri
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+private fun openExportedPdf(context: Context, fileUri: Uri) {
+    try {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(fileUri, "application/pdf")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(Intent.createChooser(intent, "Open Patrol PDF Report"))
     } catch (e: Exception) {
         e.printStackTrace()
     }
@@ -572,19 +639,43 @@ fun ReportsScreen(
         AlertDialog(
             onDismissRequest = { showPdfPreviewDialog = null },
             confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            val results = withContext(Dispatchers.IO) { onGetResultsForLog(log.id) }
-                            printPatrolPdf(context, log, results, matchingAbnormality)
-                        }
-                        showPdfPreviewDialog = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = YamahaBlue)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(imageVector = Icons.Default.Print, contentDescription = "Print")
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Print Official Document")
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                val results = withContext(Dispatchers.IO) { onGetResultsForLog(log.id) }
+                                val uri = withContext(Dispatchers.IO) { exportPdfToDownloads(context, log, results, matchingAbnormality) }
+                                if (uri != null) {
+                                    Toast.makeText(context, "PDF saved to Downloads", Toast.LENGTH_SHORT).show()
+                                    openExportedPdf(context, uri)
+                                } else {
+                                    Toast.makeText(context, "Failed to save PDF", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(imageVector = Icons.Default.Download, contentDescription = "Download", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Save PDF", fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                val results = withContext(Dispatchers.IO) { onGetResultsForLog(log.id) }
+                                printPatrolPdf(context, log, results, matchingAbnormality)
+                            }
+                            showPdfPreviewDialog = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = YamahaBlue)
+                    ) {
+                        Icon(imageVector = Icons.Default.Print, contentDescription = "Print", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Print", fontSize = 12.sp)
+                    }
                 }
             },
             dismissButton = {

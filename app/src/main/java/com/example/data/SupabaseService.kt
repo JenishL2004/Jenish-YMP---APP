@@ -60,6 +60,9 @@ class SupabaseService(
                 apiKey.length > 20
     }
 
+    fun getBaseUrl(): String = baseUrl
+    fun getApiKey(): String = apiKey
+
     private fun buildRequest(endpoint: String, method: String, body: String? = null, preferHeader: String? = null): Request {
         val url = if (endpoint.startsWith("http")) endpoint else "$baseUrl/rest/v1/$endpoint"
         val builder = Request.Builder()

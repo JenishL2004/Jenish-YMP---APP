@@ -3,13 +3,378 @@ package com.example.data
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 class YamahaRepository(private val dao: YamahaDao) {
 
     val supabaseService = SupabaseService()
+    private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val realtimeManager: SupabaseRealtimeManager by lazy {
+        SupabaseRealtimeManager(
+            baseUrl = supabaseService.getBaseUrl(),
+            apiKey = supabaseService.getApiKey(),
+            scope = repoScope,
+            onEventReceived = ::handleRealtimeEvent
+        )
+    }
+
+    init {
+        startRealtimeSync()
+    }
+
+    fun startRealtimeSync() {
+        if (supabaseService.isConfigured()) {
+            realtimeManager.connect()
+        }
+    }
+
+    private suspend fun handleRealtimeEvent(table: String, action: String, record: JSONObject?, oldRecord: JSONObject?) {
+        try {
+            when (table.lowercase()) {
+                "users" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val user = UserEntity(
+                                    employeeId = obj.optString("employee_id"),
+                                    employeeName = obj.optString("employee_name"),
+                                    username = obj.optString("username"),
+                                    email = obj.optString("email"),
+                                    department = obj.optString("department"),
+                                    plant = obj.optString("plant"),
+                                    role = obj.optString("role"),
+                                    passwordHash = obj.optString("password_hash"),
+                                    status = obj.optString("status", "Active"),
+                                    createdBy = obj.optString("created_by")
+                                )
+                                if (user.employeeId.isNotBlank()) dao.insertUser(user)
+                            }
+                        }
+                        "DELETE" -> {
+                            val empId = oldRecord?.optString("employee_id")?.ifBlank { record?.optString("employee_id") }
+                            if (!empId.isNullOrBlank() && empId != "admin") {
+                                dao.deleteUser(empId)
+                            }
+                        }
+                    }
+                }
+                "shops" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val shopName = obj.optString("shop_name")
+                                if (id > 0 && shopName.isNotBlank()) {
+                                    dao.insertShop(ShopEntity(id = id, shopName = shopName))
+                                }
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deleteShop(id)
+                        }
+                    }
+                }
+                "lines" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val shopId = obj.optInt("shop_id")
+                                val shopName = obj.optString("shop_name")
+                                val lineName = obj.optString("line_name")
+                                if (id > 0 && lineName.isNotBlank()) {
+                                    dao.insertLine(LineEntity(id = id, shopId = shopId, shopName = shopName, lineName = lineName))
+                                }
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deleteLine(id)
+                        }
+                    }
+                }
+                "machines" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val lineId = obj.optInt("line_id")
+                                val shopName = obj.optString("shop_name")
+                                val lineName = obj.optString("line_name")
+                                val machineName = obj.optString("machine_name")
+                                val machineType = obj.optString("machine_type")
+                                val manufacturer = obj.optString("manufacturer")
+                                val model = obj.optString("model")
+                                val status = obj.optString("status", "Operational")
+                                if (id > 0 && machineName.isNotBlank()) {
+                                    dao.insertMachine(MachineEntity(id, lineId, shopName, lineName, machineName, machineType, manufacturer, model, status))
+                                }
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deleteMachine(id)
+                        }
+                    }
+                }
+                "patrol_points" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val machineId = obj.optInt("machine_id")
+                                val machineName = obj.optString("machine_name")
+                                val pointName = obj.optString("point_name")
+                                val category = obj.optString("category")
+                                val standardValue = obj.optString("standard_value")
+                                val sequenceNo = obj.optInt("sequence_no", 1)
+                                val frequency = obj.optString("frequency", "Every Shift")
+                                val active = obj.optBoolean("active", true)
+                                val description = obj.optString("description")
+                                val revisionNumber = obj.optInt("revision_number", 1)
+                                if (id > 0 && pointName.isNotBlank()) {
+                                    dao.insertPatrolPoint(
+                                        PatrolPointEntity(
+                                            id = id,
+                                            machineId = machineId,
+                                            machineName = machineName,
+                                            pointName = pointName,
+                                            category = category,
+                                            standardValue = standardValue,
+                                            sequenceNo = sequenceNo,
+                                            frequency = frequency,
+                                            active = active,
+                                            description = description,
+                                            revisionNumber = revisionNumber
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deletePatrolPoint(id)
+                        }
+                    }
+                }
+                "patrol_point_revisions" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val pointId = obj.optInt("point_id")
+                                val revisionNumber = obj.optInt("revision_number")
+                                val revisionDate = obj.optLong("revision_date", System.currentTimeMillis())
+                                val revisedBy = obj.optString("revised_by")
+                                val reason = obj.optString("reason")
+                                val oldValue = obj.optString("old_value")
+                                val newValue = obj.optString("new_value")
+                                dao.insertPointRevision(
+                                    PatrolPointRevisionEntity(
+                                        id = id,
+                                        pointId = pointId,
+                                        revisionNumber = revisionNumber,
+                                        revisionDate = revisionDate,
+                                        revisedBy = revisedBy,
+                                        reason = reason,
+                                        oldValue = oldValue,
+                                        newValue = newValue
+                                    )
+                                )
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deletePointRevision(id)
+                        }
+                    }
+                }
+                "patrol_logs" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val patrolNumber = obj.optString("patrol_number")
+                                val shopName = obj.optString("shop_name")
+                                val lineName = obj.optString("line_name")
+                                val machineName = obj.optString("machine_name")
+                                val machineId = obj.optInt("machine_id")
+                                val employeeId = obj.optString("employee_id")
+                                val employeeName = obj.optString("employee_name")
+                                val shift = obj.optString("shift")
+                                val timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                                val overallStatus = obj.optString("overall_status", "NORMAL")
+                                val notes = obj.optString("notes")
+                                if (id > 0) {
+                                    dao.insertPatrolLog(
+                                        PatrolLogEntity(
+                                            id = id,
+                                            patrolNumber = patrolNumber,
+                                            shopName = shopName,
+                                            lineName = lineName,
+                                            machineName = machineName,
+                                            machineId = machineId,
+                                            employeeId = employeeId,
+                                            employeeName = employeeName,
+                                            shift = shift,
+                                            timestamp = timestamp,
+                                            overallStatus = overallStatus,
+                                            notes = notes
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deletePatrolLog(id)
+                        }
+                    }
+                }
+                "patrol_point_results" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val patrolLogId = obj.optInt("patrol_log_id")
+                                val patrolPointId = obj.optInt("patrol_point_id")
+                                val checkpointName = obj.optString("checkpoint_name")
+                                val category = obj.optString("category")
+                                val standardValue = obj.optString("standard_value")
+                                val status = obj.optString("status")
+                                val remarks = obj.optString("remarks")
+                                val problemDescription = obj.optString("problem_description")
+                                val severity = obj.optString("severity")
+                                val countermeasure = obj.optString("countermeasure")
+                                val photoUri = obj.optString("photo_uri").takeIf { it.isNotBlank() && it != "null" }
+                                if (id > 0) {
+                                    dao.insertPatrolPointResults(
+                                        listOf(
+                                            PatrolPointResultEntity(
+                                                id = id,
+                                                patrolLogId = patrolLogId,
+                                                patrolPointId = patrolPointId,
+                                                checkpointName = checkpointName,
+                                                category = category,
+                                                standardValue = standardValue,
+                                                status = status,
+                                                remarks = remarks,
+                                                problemDescription = problemDescription,
+                                                severity = severity,
+                                                countermeasure = countermeasure,
+                                                photoUri = photoUri
+                                            )
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deletePatrolPointResult(id)
+                        }
+                    }
+                }
+                "abnormalities" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val patrolLogId = obj.optInt("patrol_log_id")
+                                val abnormalityNumber = obj.optString("abnormality_number")
+                                val shopName = obj.optString("shop_name")
+                                val lineName = obj.optString("line_name")
+                                val machineName = obj.optString("machine_name")
+                                val machineId = obj.optInt("machine_id")
+                                val checkpointName = obj.optString("checkpoint_name")
+                                val category = obj.optString("category")
+                                val priority = obj.optString("priority")
+                                val problemDescription = obj.optString("problem_description")
+                                val rootCause = obj.optString("root_cause")
+                                val correctiveAction = obj.optString("corrective_action")
+                                val responsiblePerson = obj.optString("responsible_person")
+                                val targetDate = obj.optString("target_date")
+                                val completedDate = obj.optString("completed_date").takeIf { it.isNotBlank() && it != "null" }
+                                val status = obj.optString("status")
+                                val reportedBy = obj.optString("reported_by")
+                                val timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                                val photoUri = obj.optString("photo_uri").takeIf { it.isNotBlank() && it != "null" }
+                                if (id > 0) {
+                                    dao.insertAbnormality(
+                                        AbnormalityEntity(
+                                            id = id,
+                                            patrolLogId = patrolLogId,
+                                            abnormalityNumber = abnormalityNumber,
+                                            shopName = shopName,
+                                            lineName = lineName,
+                                            machineName = machineName,
+                                            machineId = machineId,
+                                            checkpointName = checkpointName,
+                                            category = category,
+                                            priority = priority,
+                                            problemDescription = problemDescription,
+                                            rootCause = rootCause,
+                                            correctiveAction = correctiveAction,
+                                            responsiblePerson = responsiblePerson,
+                                            targetDate = targetDate,
+                                            completedDate = completedDate,
+                                            status = status,
+                                            reportedBy = reportedBy,
+                                            timestamp = timestamp,
+                                            photoUri = photoUri
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deleteAbnormality(id)
+                        }
+                    }
+                }
+                "audit_logs" -> {
+                    when (action) {
+                        "INSERT", "UPDATE" -> {
+                            record?.let { obj ->
+                                val id = obj.optInt("id")
+                                val employeeId = obj.optString("employee_id")
+                                val employeeName = obj.optString("employee_name")
+                                val actionType = obj.optString("action")
+                                val module = obj.optString("module")
+                                val details = obj.optString("details")
+                                val timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                                dao.insertAuditLog(
+                                    AuditLogEntity(
+                                        id = id,
+                                        employeeId = employeeId,
+                                        employeeName = employeeName,
+                                        action = actionType,
+                                        module = module,
+                                        details = details,
+                                        timestamp = timestamp
+                                    )
+                                )
+                            }
+                        }
+                        "DELETE" -> {
+                            val id = oldRecord?.optInt("id", 0) ?: record?.optInt("id", 0) ?: 0
+                            if (id > 0) dao.deleteAuditLog(id)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("YamahaRepository", "Error handling realtime event for table $table", e)
+        }
+    }
 
     /**
      * Complete Bidirectional/Centralized Synchronization:
@@ -37,7 +402,6 @@ class YamahaRepository(private val dao: YamahaDao) {
                     remoteUsers.forEach { dao.insertUser(it) }
                     syncedCount += remoteUsers.size
                 } else {
-                    // Central DB empty for users - push seed users to Supabase
                     val localUsers = dao.getAllUsersDirect()
                     localUsers.forEach { supabaseService.upsertUser(it) }
                 }
@@ -122,6 +486,13 @@ class YamahaRepository(private val dao: YamahaDao) {
             // 6. Sync Patrol Point Revisions
             val remoteRevisions = supabaseService.fetchRevisions()
             if (remoteRevisions != null && remoteRevisions.isNotEmpty()) {
+                val remoteRevIds = remoteRevisions.map { it.id }.toSet()
+                val localRevs = dao.getAllRevisionsDirect()
+                localRevs.forEach { local ->
+                    if (!remoteRevIds.contains(local.id)) {
+                        dao.deletePointRevision(local.id)
+                    }
+                }
                 remoteRevisions.forEach { dao.insertPointRevision(it) }
                 syncedCount += remoteRevisions.size
             }
@@ -253,11 +624,10 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.insertUser(remote)
             Result.success(remote)
         } else {
-            // Local fallback caching
-            dao.insertUser(user)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Could not synchronize user to central Supabase."))
+                Result.failure(Exception("Could not synchronize user to central Supabase cloud database."))
             } else {
+                dao.insertUser(user)
                 Result.success(user)
             }
         }
@@ -269,10 +639,10 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.updateUser(remote)
             Result.success(remote)
         } else {
-            dao.updateUser(user)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Could not synchronize user update to central Supabase."))
+                Result.failure(Exception("Could not synchronize user update to central Supabase cloud database."))
             } else {
+                dao.updateUser(user)
                 Result.success(user)
             }
         }
@@ -280,11 +650,11 @@ class YamahaRepository(private val dao: YamahaDao) {
 
     suspend fun deleteUser(employeeId: String): Result<Unit> = withContext(Dispatchers.IO) {
         val remoteSuccess = supabaseService.deleteUser(employeeId)
-        dao.deleteUser(employeeId)
         if (remoteSuccess || !supabaseService.isConfigured()) {
+            dao.deleteUser(employeeId)
             Result.success(Unit)
         } else {
-            Result.failure(Exception("Could not delete user from central Supabase."))
+            Result.failure(Exception("Could not delete user from central Supabase cloud database."))
         }
     }
 
@@ -297,11 +667,11 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.insertShop(remote)
             Result.success(remote)
         } else {
-            val localId = dao.insertShop(shop).toInt()
-            val saved = shop.copy(id = if (shop.id > 0) shop.id else localId)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Failed to persist Shop to central Supabase."))
+                Result.failure(Exception("Failed to persist Shop to central Supabase cloud database."))
             } else {
+                val localId = dao.insertShop(shop).toInt()
+                val saved = shop.copy(id = if (shop.id > 0) shop.id else localId)
                 Result.success(saved)
             }
         }
@@ -313,10 +683,10 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.updateShop(remote)
             Result.success(remote)
         } else {
-            dao.updateShop(shop)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Failed to update Shop in central Supabase."))
+                Result.failure(Exception("Failed to update Shop in central Supabase cloud database."))
             } else {
+                dao.updateShop(shop)
                 Result.success(shop)
             }
         }
@@ -324,11 +694,11 @@ class YamahaRepository(private val dao: YamahaDao) {
 
     suspend fun deleteShop(shopId: Int): Result<Unit> = withContext(Dispatchers.IO) {
         val remoteSuccess = supabaseService.deleteShop(shopId)
-        dao.deleteShop(shopId)
         if (remoteSuccess || !supabaseService.isConfigured()) {
+            dao.deleteShop(shopId)
             Result.success(Unit)
         } else {
-            Result.failure(Exception("Failed to delete Shop from central Supabase."))
+            Result.failure(Exception("Failed to delete Shop from central Supabase cloud database."))
         }
     }
 
@@ -342,11 +712,11 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.insertLine(remote)
             Result.success(remote)
         } else {
-            val localId = dao.insertLine(line).toInt()
-            val saved = line.copy(id = if (line.id > 0) line.id else localId)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Failed to persist Line to central Supabase."))
+                Result.failure(Exception("Failed to persist Line to central Supabase cloud database."))
             } else {
+                val localId = dao.insertLine(line).toInt()
+                val saved = line.copy(id = if (line.id > 0) line.id else localId)
                 Result.success(saved)
             }
         }
@@ -358,10 +728,10 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.updateLine(remote)
             Result.success(remote)
         } else {
-            dao.updateLine(line)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Failed to update Line in central Supabase."))
+                Result.failure(Exception("Failed to update Line in central Supabase cloud database."))
             } else {
+                dao.updateLine(line)
                 Result.success(line)
             }
         }
@@ -369,11 +739,11 @@ class YamahaRepository(private val dao: YamahaDao) {
 
     suspend fun deleteLine(lineId: Int): Result<Unit> = withContext(Dispatchers.IO) {
         val remoteSuccess = supabaseService.deleteLine(lineId)
-        dao.deleteLine(lineId)
         if (remoteSuccess || !supabaseService.isConfigured()) {
+            dao.deleteLine(lineId)
             Result.success(Unit)
         } else {
-            Result.failure(Exception("Failed to delete Line from central Supabase."))
+            Result.failure(Exception("Failed to delete Line from central Supabase cloud database."))
         }
     }
 
@@ -387,11 +757,11 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.insertMachine(remote)
             Result.success(remote)
         } else {
-            val localId = dao.insertMachine(machine).toInt()
-            val saved = machine.copy(id = if (machine.id > 0) machine.id else localId)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Failed to persist Machine to central Supabase."))
+                Result.failure(Exception("Failed to persist Machine to central Supabase cloud database."))
             } else {
+                val localId = dao.insertMachine(machine).toInt()
+                val saved = machine.copy(id = if (machine.id > 0) machine.id else localId)
                 Result.success(saved)
             }
         }
@@ -403,10 +773,10 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.updateMachine(remote)
             Result.success(remote)
         } else {
-            dao.updateMachine(machine)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Failed to update Machine in central Supabase."))
+                Result.failure(Exception("Failed to update Machine in central Supabase cloud database."))
             } else {
+                dao.updateMachine(machine)
                 Result.success(machine)
             }
         }
@@ -414,11 +784,11 @@ class YamahaRepository(private val dao: YamahaDao) {
 
     suspend fun deleteMachine(machineId: Int): Result<Unit> = withContext(Dispatchers.IO) {
         val remoteSuccess = supabaseService.deleteMachine(machineId)
-        dao.deleteMachine(machineId)
         if (remoteSuccess || !supabaseService.isConfigured()) {
+            dao.deleteMachine(machineId)
             Result.success(Unit)
         } else {
-            Result.failure(Exception("Failed to delete Machine from central Supabase."))
+            Result.failure(Exception("Failed to delete Machine from central Supabase cloud database."))
         }
     }
 
@@ -432,11 +802,11 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.insertPatrolPoint(remote)
             Result.success(remote)
         } else {
-            val localId = dao.insertPatrolPoint(point).toInt()
-            val saved = point.copy(id = if (point.id > 0) point.id else localId)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Failed to persist Patrol Point to central Supabase."))
+                Result.failure(Exception("Failed to persist Patrol Point to central Supabase cloud database."))
             } else {
+                val localId = dao.insertPatrolPoint(point).toInt()
+                val saved = point.copy(id = if (point.id > 0) point.id else localId)
                 Result.success(saved)
             }
         }
@@ -448,10 +818,10 @@ class YamahaRepository(private val dao: YamahaDao) {
             dao.updatePatrolPoint(remote)
             Result.success(remote)
         } else {
-            dao.updatePatrolPoint(point)
             if (supabaseService.isConfigured()) {
-                Result.failure(Exception("Failed to update Patrol Point in central Supabase."))
+                Result.failure(Exception("Failed to update Patrol Point in central Supabase cloud database."))
             } else {
+                dao.updatePatrolPoint(point)
                 Result.success(point)
             }
         }
@@ -459,11 +829,11 @@ class YamahaRepository(private val dao: YamahaDao) {
 
     suspend fun deletePatrolPoint(pointId: Int): Result<Unit> = withContext(Dispatchers.IO) {
         val remoteSuccess = supabaseService.deletePatrolPoint(pointId)
-        dao.deletePatrolPoint(pointId)
         if (remoteSuccess || !supabaseService.isConfigured()) {
+            dao.deletePatrolPoint(pointId)
             Result.success(Unit)
         } else {
-            Result.failure(Exception("Failed to delete Patrol Point from central Supabase."))
+            Result.failure(Exception("Failed to delete Patrol Point from central Supabase cloud database."))
         }
     }
 

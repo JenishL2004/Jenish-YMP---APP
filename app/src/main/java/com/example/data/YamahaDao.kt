@@ -109,6 +109,12 @@ interface YamahaDao {
     @Query("SELECT * FROM patrol_point_revisions ORDER BY revisionDate DESC")
     fun getAllRevisions(): Flow<List<PatrolPointRevisionEntity>>
 
+    @Query("SELECT * FROM patrol_point_revisions")
+    suspend fun getAllRevisionsDirect(): List<PatrolPointRevisionEntity>
+
+    @Query("DELETE FROM patrol_point_revisions WHERE id = :revId")
+    suspend fun deletePointRevision(revId: Int)
+
     // --- PATROL LOGS & RESULTS ---
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPatrolLog(log: PatrolLogEntity): Long
@@ -159,6 +165,12 @@ interface YamahaDao {
 
     @Query("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200")
     fun getAllAuditLogs(): Flow<List<AuditLogEntity>>
+
+    @Query("SELECT * FROM audit_logs")
+    suspend fun getAllAuditLogsDirect(): List<AuditLogEntity>
+
+    @Query("DELETE FROM audit_logs WHERE id = :logId")
+    suspend fun deleteAuditLog(logId: Int)
 
     // --- CLEAR TRANSACTIONAL DATA ---
     @Query("DELETE FROM patrol_logs")
